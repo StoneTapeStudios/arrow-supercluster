@@ -21,7 +21,16 @@ export class ArrowClusterEngine {
   private trees: KDBush[] = [];
   private treeData: number[][] = [];
   private numPoints = 0;
-  private table: Table | null = null;
+
+  // Original lng/lat coordinates from Arrow, used for zero-cost lookups
+  // of individual (unclustered) points at query time.
+  private coordValues: Float64Array | null = null;
+
+  // Reusable output buffers — allocated once during load(), reused per query
+  private _bufPositions: Float64Array = new Float64Array(0);
+  private _bufPointCounts: Uint32Array = new Uint32Array(0);
+  private _bufIds: Float64Array = new Float64Array(0);
+  private _bufIsCluster: Uint8Array = new Uint8Array(0);
 
   readonly radius: number;
   readonly extent: number;
@@ -41,7 +50,6 @@ export class ArrowClusterEngine {
    * Load an Arrow Table and build the spatial index.
    */
   load(table: Table, geometryColumn = "geometry", _idColumn = "id"): void {
-    this.table = table;
     this.numPoints = table.numRows;
 
     const geomCol = table.getChild(geometryColumn);
@@ -52,6 +60,7 @@ export class ArrowClusterEngine {
     }
 
     const coordValues = getCoordBuffer(geomCol);
+    this.coordValues = coordValues;
 
     // Build the initial flat data array from Arrow coordinates
     const data: number[] = [];
@@ -88,6 +97,14 @@ export class ArrowClusterEngine {
       this.trees[z] = tree;
       this.treeData[z] = nextData;
     }
+
+    // Pre-allocate reusable output buffers sized to the max possible result count.
+    // The highest zoom level (maxZoom+1) has the most items — one per input point.
+    const maxItems = (this.treeData[this.maxZoom + 1].length / STRIDE) | 0;
+    this._bufPositions = new Float64Array(maxItems * 2);
+    this._bufPointCounts = new Uint32Array(maxItems);
+    this._bufIds = new Float64Array(maxItems);
+    this._bufIsCluster = new Uint8Array(maxItems);
   }
 
   /**
@@ -116,6 +133,7 @@ export class ArrowClusterEngine {
     const tree = this.trees[z];
     const data = this.treeData[z];
     if (!tree || !data) return this._emptyOutput();
+    const coords = this.coordValues!;
 
     const resultIds = tree.range(
       lngX(minLng),
@@ -125,21 +143,40 @@ export class ArrowClusterEngine {
     );
 
     const length = resultIds.length;
-    const positions = new Float64Array(length * 2);
-    const pointCounts = new Uint32Array(length);
-    const ids = new Float64Array(length);
-    const isCluster = new Uint8Array(length);
+
+    // Write into pre-allocated buffers and return zero-copy subarray views.
+    // Data is valid until the next getClusters() call.
+    const positions = this._bufPositions;
+    const pointCounts = this._bufPointCounts;
+    const ids = this._bufIds;
+    const isCluster = this._bufIsCluster;
 
     for (let i = 0; i < length; i++) {
       const k = resultIds[i] * STRIDE;
-      positions[i * 2] = xLng(data[k]);
-      positions[i * 2 + 1] = yLat(data[k + 1]);
-      pointCounts[i] = data[k + OFFSET_NUM];
+      const numPts = data[k + OFFSET_NUM];
+      if (numPts > 1) {
+        // Cluster: inverse-project mercator → lng/lat
+        positions[i * 2] = xLng(data[k]);
+        positions[i * 2 + 1] = yLat(data[k + 1]);
+        isCluster[i] = 1;
+      } else {
+        // Individual point: read original lng/lat directly (no trig)
+        const srcIdx = data[k + OFFSET_ID];
+        positions[i * 2] = coords[srcIdx * 2];
+        positions[i * 2 + 1] = coords[srcIdx * 2 + 1];
+        isCluster[i] = 0;
+      }
+      pointCounts[i] = numPts;
       ids[i] = data[k + OFFSET_ID];
-      isCluster[i] = data[k + OFFSET_NUM] > 1 ? 1 : 0;
     }
 
-    return { positions, pointCounts, ids, isCluster, length };
+    return {
+      positions: positions.subarray(0, length * 2),
+      pointCounts: pointCounts.subarray(0, length),
+      ids: ids.subarray(0, length),
+      isCluster: isCluster.subarray(0, length),
+      length,
+    };
   }
 
   /**
@@ -175,11 +212,19 @@ export class ArrowClusterEngine {
 
     for (let i = 0; i < length; i++) {
       const k = children[i] * STRIDE;
-      positions[i * 2] = xLng(data[k]);
-      positions[i * 2 + 1] = yLat(data[k + 1]);
-      pointCounts[i] = data[k + OFFSET_NUM];
+      const numPts = data[k + OFFSET_NUM];
+      if (numPts > 1) {
+        positions[i * 2] = xLng(data[k]);
+        positions[i * 2 + 1] = yLat(data[k + 1]);
+        isCluster[i] = 1;
+      } else {
+        const srcIdx = data[k + OFFSET_ID];
+        positions[i * 2] = this.coordValues![srcIdx * 2];
+        positions[i * 2 + 1] = this.coordValues![srcIdx * 2 + 1];
+        isCluster[i] = 0;
+      }
+      pointCounts[i] = numPts;
       ids[i] = data[k + OFFSET_ID];
-      isCluster[i] = data[k + OFFSET_NUM] > 1 ? 1 : 0;
     }
 
     return { positions, pointCounts, ids, isCluster, length };

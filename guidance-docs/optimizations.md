@@ -59,39 +59,98 @@ The `number[]` → `Float64Array` swap is a net negative. V8's internal represen
 
 ---
 
+## Attempt 2: Reusable output buffers + direct coordinate reads (SHIPPED)
+
+### Hypothesis
+
+At high zoom levels (z8-z16) with small-to-medium datasets (10k-100k), the Arrow engine was 1.2-1.6× _slower_ than Supercluster. Two costs dominated the query hot path:
+
+1. **Per-query typed array allocation**: `getClusters()` allocated 4 fresh typed arrays (`Float64Array`, `Uint32Array`, `Float64Array`, `Uint8Array`) on every call. At high zoom where `length ≈ numPoints`, this is significant.
+
+2. **Per-point inverse mercator transforms**: Every result — cluster or individual point — called `xLng(data[k])` and `yLat(data[k+1])`. `yLat()` calls `Math.atan(Math.exp(...))` — expensive trig. At z16 with 200k points, that's 200k `atan` + `exp` calls per query.
+
+Reading Supercluster's source revealed the key insight: for individual points (the vast majority at high zoom), Supercluster returns `this.points[data[k + OFFSET_ID]]` — a direct reference to the original GeoJSON input. No coordinate transform, no allocation. It only calls `xLng()`/`yLat()` for actual clusters, which are rare at high zoom.
+
+### Implementation
+
+Two changes, applied together:
+
+**1. Reusable output buffers with `subarray()` views**
+
+- Pre-allocate 4 output buffers during `load()`, sized to `maxItems` (the point count at the highest zoom level)
+- `getClusters()` writes into these buffers, then returns `subarray()` views — zero allocation, zero copy
+- Tradeoff: returned data is only valid until the next `getClusters()` call (standard pattern for GPU upload pipelines like deck.gl)
+
+**2. Direct coordinate reads for individual points**
+
+- Store a reference to the original Arrow coordinate buffer (`coordValues: Float64Array`) during `load()`
+- In the query loop, branch on `numPts > 1`:
+  - Cluster → `xLng(data[k])` / `yLat(data[k+1])` (inverse mercator, only for the few clusters)
+  - Individual point → `coords[srcIdx * 2]` / `coords[srcIdx * 2 + 1]` (direct read, no trig)
+- Applied the same pattern to `getChildren()`
+
+### Results
+
+**10k points (where the regression was worst):**
+
+| Zoom | Before       | After        |
+| ---- | ------------ | ------------ |
+| z8   | 1.31× slower | 2.13× faster |
+| z10  | 1.46× slower | 1.86× faster |
+| z12  | 1.49× slower | 1.81× faster |
+| z14  | 1.60× slower | 1.79× faster |
+| z16  | 1.63× slower | 1.78× faster |
+
+**100k points:**
+
+| Zoom | Before       | After        |
+| ---- | ------------ | ------------ |
+| z8   | 2.58× faster | 3.81× faster |
+| z10  | 1.18× slower | 1.14× faster |
+| z12  | 1.31× slower | 1.42× faster |
+| z14  | 1.27× slower | 1.38× faster |
+| z16  | 1.33× slower | 1.42× faster |
+
+**200k summary:** Average query speedup went from 6.80× to 7.54×. Arrow is now faster than Supercluster at every zoom level across all dataset sizes (with near-parity at 200k z14).
+
+The high-zoom regression is completely eliminated.
+
+### Why It Worked
+
+The direct coordinate read is the big win. It mirrors exactly what Supercluster does — `this.points[id]` for individual points — but instead of referencing a GeoJSON object, we reference the Arrow `Float64Array` coordinate buffer. Same O(1) lookup, same zero-transform cost, but our output is still typed arrays rather than GeoJSON objects, so we keep the low/mid-zoom advantage too.
+
+The reusable buffers with `subarray()` are a secondary win — they eliminate per-query allocation entirely. `subarray()` returns a view into the same `ArrayBuffer`, so there's no copy. The only cost is the loop that writes values into the buffer.
+
+### Cleanup
+
+- Removed unused `this.table` field (was stored but never read)
+- Updated stale comments in `getClusters()`
+
+---
+
 ## Future Optimization Candidates
 
-### 1. High-zoom query performance (the remaining gap)
+### 1. Reduce `getChildren()` allocations in hierarchy navigation ← NEXT TARGET
 
-**Problem**: At high zoom levels (z10-z16) with small-to-medium datasets (10k-100k), the Arrow engine is 1.2-1.6× _slower_ than Supercluster. At these zoom levels there's minimal clustering — nearly all points are returned individually.
+**Problem**: `getClusterExpansionZoom()` and `getLeaves()` call `getChildren()` repeatedly, each call allocating 4 typed arrays. For deep cluster hierarchies this creates GC pressure. Unlike `getClusters()` (which now uses reusable buffers), `getChildren()` still allocates fresh arrays per call.
 
-**Root cause**: Supercluster caches its GeoJSON features during `load()` and returns references to them at query time. The Arrow engine allocates fresh typed arrays for every `getClusters()` call. When the result set is large (nearly all points), the allocation cost of 4 typed arrays dominates.
+**Approach**: Add an internal `_getChildIndices()` that returns raw index arrays without typed array wrapping, used only by internal hierarchy methods (`_appendLeafIndices`, `getClusterExpansionZoom`). Keep `getChildren()` as the public API with full typed array output. This is low-risk, isolated to internal methods, and directly reduces GC pressure in the hierarchy traversal path.
 
-**Possible approaches**:
+**Why this is next**: It's the same pattern we just applied to `getClusters()` — avoid unnecessary allocation on internal hot paths. The implementation is straightforward and the risk is minimal.
 
-- Pre-allocate reusable output buffers sized to `numPoints` and return views/slices into them
-- At zoom levels above a threshold where clustering is minimal, skip the typed array allocation and return a lightweight wrapper that reads directly from `treeData`
-- This gap closes naturally at larger datasets (200k+) where the GeoJSON object creation cost outweighs typed array allocation
-
-### 2. Web Worker offloading (Phase 4 item)
-
-**Problem**: `engine.load()` takes ~1s at 200k points, ~5.5s at 1M points, blocking the main thread.
-
-**Approach**: Move `load()` to a Web Worker. KDBush stores its index as a single `ArrayBuffer` which is transferable between threads. The `treeData` arrays could also be transferred. This doesn't make load _faster_, but it unblocks the main thread.
-
-### 3. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing
+### 2. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing
 
 **Problem**: `_cluster()` builds `nextData` as an empty `number[]` and grows it via `.push()`. V8 handles this well, but at 1M points the array goes through many internal resizes. Since the output size is always ≤ the input size (clustering reduces count), we could pre-allocate `nextData` at the input's length and use index writes + a cursor, then truncate with `.length = cursor` at the end.
 
 **Tradeoff**: This is the same direction as Attempt 1 but staying within `number[]` (no `Float64Array`). V8's packed double array with pre-set `.length` avoids resize copies while keeping the lightweight memory model. Worth benchmarking in isolation — the risk is low since it doesn't change the storage type.
 
-### 4. Reduce `getChildren()` allocations in hierarchy navigation
+### 3. Web Worker offloading (Phase 4 item)
 
-**Problem**: `getClusterExpansionZoom()` and `getLeaves()` call `getChildren()` repeatedly, each call allocating 4 typed arrays. For deep cluster hierarchies this creates GC pressure.
+**Problem**: `engine.load()` takes ~1s at 200k points, ~5.5s at 1M points, blocking the main thread.
 
-**Approach**: Add an internal `_getChildIndices()` that returns raw index arrays without typed array wrapping, used only by internal hierarchy methods. Keep `getChildren()` as the public API with full typed array output.
+**Approach**: Move `load()` to a Web Worker. KDBush stores its index as a single `ArrayBuffer` which is transferable between threads. The `treeData` arrays could also be transferred. This doesn't make load _faster_, but it unblocks the main thread.
 
-### 5. Benchmark the _real_ pipeline, not just the engine
+### 4. Benchmark the _real_ pipeline, not just the engine
 
 **Problem**: The current benchmark compares engine-to-engine, but the real win is the full pipeline: GeoJSON fetch + parse + Supercluster vs GeoParquet fetch + Arrow Table + ArrowClusterEngine. The ~84% wire size reduction and elimination of JSON parsing are likely the biggest real-world wins, but we're not measuring them yet.
 
