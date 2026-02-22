@@ -1,0 +1,38 @@
+{
+  "name": "arrow-cluster-layer",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "arrow-supercluster": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deck.gl/core": "^9.0.0",
+    "@deck.gl/layers": "^9.0.0",
+    "apache-arrow": ">=14.0.0"
+  },
+  "devDependencies": {
+    "@deck.gl/core": "^9.1.10",
+    "@deck.gl/layers": "^9.1.10",
+    "apache-arrow": "^20.0.0",
+    "tsdown": "^0.9.0",
+    "vitest": "^3.2.1"
+  }
+}
