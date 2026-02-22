@@ -155,13 +155,13 @@ Same principle as Attempt 2: avoid allocating output structures on internal hot 
 
 ## Future Optimization Candidates
 
-### 1. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing
+### ~~1. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing~~ (SKIPPED)
 
-**Problem**: `_cluster()` builds `nextData` as an empty `number[]` and grows it via `.push()`. V8 handles this well, but at 1M points the array goes through many internal resizes. Since the output size is always ≤ the input size (clustering reduces count), we could pre-allocate `nextData` at the input's length and use index writes + a cursor, then truncate with `.length = cursor` at the end.
+**Problem**: `_cluster()` builds `nextData` as an empty `number[]` and grows it via `.push()`. V8 handles this well, but at 1M points the array goes through many internal resizes.
 
-**Tradeoff**: This is the same direction as Attempt 1 but staying within `number[]` (no `Float64Array`). V8's packed double array with pre-set `.length` avoids resize copies while keeping the lightweight memory model. Worth benchmarking in isolation — the risk is low since it doesn't change the storage type.
+**Why we're skipping it**: Attempt 1 already proved that internal flat array manipulation is not the bottleneck — KDBush index construction dominates load time. Pre-sizing a `number[]` avoids the `Float64Array` overhead that sank Attempt 1, but you're still optimizing a tiny fraction of the total load cost. Estimated impact: 1-3% load improvement at best, zero query impact. Not worth the code churn for an unnoticeable gain.
 
-### 2. Web Worker offloading (Phase 4 item)
+### 2. Web Worker offloading (Phase 4 item) — NEXT TARGET
 
 **Problem**: `engine.load()` takes ~1s at 200k points, ~5.5s at 1M points, blocking the main thread.
 
