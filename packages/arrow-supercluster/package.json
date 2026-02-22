@@ -19,6 +19,7 @@
     "build": "tsdown",
     "test": "vitest run",
     "bench": "tsx --expose-gc benchmarks/run.ts",
+    "bench:pipeline": "tsx --expose-gc benchmarks/pipeline.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

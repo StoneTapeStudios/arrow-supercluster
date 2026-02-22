@@ -183,35 +183,17 @@ export class ArrowClusterEngine {
    * Get the immediate children of a cluster.
    */
   getChildren(clusterId: number): ClusterOutput {
-    const originId = this._getOriginId(clusterId);
-    const originZoom = this._getOriginZoom(clusterId);
+    const { indices, data } = this._getChildIndices(clusterId);
+    const length = indices.length;
+    if (length === 0) return this._emptyOutput();
 
-    const tree = this.trees[originZoom];
-    const data = this.treeData[originZoom];
-    if (!tree || !data) return this._emptyOutput();
-    if (originId * STRIDE >= data.length) return this._emptyOutput();
-
-    const r = this.radius / (this.extent * Math.pow(2, originZoom - 1));
-    const x = data[originId * STRIDE];
-    const y = data[originId * STRIDE + 1];
-    const neighborIds = tree.within(x, y, r);
-
-    const children: number[] = [];
-    for (const nid of neighborIds) {
-      const k = nid * STRIDE;
-      if (data[k + OFFSET_PARENT] === clusterId) {
-        children.push(nid);
-      }
-    }
-
-    const length = children.length;
     const positions = new Float64Array(length * 2);
     const pointCounts = new Uint32Array(length);
     const ids = new Float64Array(length);
     const isCluster = new Uint8Array(length);
 
     for (let i = 0; i < length; i++) {
-      const k = children[i] * STRIDE;
+      const k = indices[i] * STRIDE;
       const numPts = data[k + OFFSET_NUM];
       if (numPts > 1) {
         positions[i * 2] = xLng(data[k]);
@@ -246,11 +228,12 @@ export class ArrowClusterEngine {
     let expansionZoom = this._getOriginZoom(clusterId) - 1;
 
     while (expansionZoom <= this.maxZoom) {
-      const children = this.getChildren(clusterId);
+      const { indices, data } = this._getChildIndices(clusterId);
       expansionZoom++;
-      if (children.length !== 1) break;
-      if (children.isCluster[0]) {
-        clusterId = children.ids[0];
+      if (indices.length !== 1) break;
+      const k = indices[0] * STRIDE;
+      if (data[k + OFFSET_NUM] > 1) {
+        clusterId = data[k + OFFSET_ID];
       } else {
         break;
       }
@@ -271,6 +254,40 @@ export class ArrowClusterEngine {
 
   // --- Private methods ---
 
+  /**
+   * Internal: find the treeData indices of a cluster's children.
+   * Returns raw indices into the data array — no typed array allocation.
+   * Used by getChildren(), getClusterExpansionZoom(), and _appendLeafIndices().
+   */
+  private _getChildIndices(clusterId: number): {
+    indices: number[];
+    data: number[];
+  } {
+    const originId = this._getOriginId(clusterId);
+    const originZoom = this._getOriginZoom(clusterId);
+    const emptyResult = { indices: [], data: [] };
+
+    const tree = this.trees[originZoom];
+    const data = this.treeData[originZoom];
+    if (!tree || !data) return emptyResult;
+    if (originId * STRIDE >= data.length) return emptyResult;
+
+    const r = this.radius / (this.extent * Math.pow(2, originZoom - 1));
+    const x = data[originId * STRIDE];
+    const y = data[originId * STRIDE + 1];
+    const neighborIds = tree.within(x, y, r);
+
+    const indices: number[] = [];
+    for (const nid of neighborIds) {
+      const k = nid * STRIDE;
+      if (data[k + OFFSET_PARENT] === clusterId) {
+        indices.push(nid);
+      }
+    }
+
+    return { indices, data };
+  }
+
   private _getOriginZoom(clusterId: number): number {
     return (clusterId - this.numPoints) % 32;
   }
@@ -286,16 +303,18 @@ export class ArrowClusterEngine {
     offset: number,
     skipped: number,
   ): number {
-    const children = this.getChildren(clusterId);
+    const { indices, data } = this._getChildIndices(clusterId);
 
-    for (let i = 0; i < children.length; i++) {
-      if (children.isCluster[i]) {
-        if (skipped + children.pointCounts[i] <= offset) {
-          skipped += children.pointCounts[i];
+    for (let i = 0; i < indices.length; i++) {
+      const k = indices[i] * STRIDE;
+      const numPts = data[k + OFFSET_NUM];
+      if (numPts > 1) {
+        if (skipped + numPts <= offset) {
+          skipped += numPts;
         } else {
           skipped = this._appendLeafIndices(
             result,
-            children.ids[i],
+            data[k + OFFSET_ID],
             limit,
             offset,
             skipped,
@@ -306,7 +325,7 @@ export class ArrowClusterEngine {
         if (skipped < offset) {
           skipped++;
         } else {
-          result.push(children.ids[i]);
+          result.push(data[k + OFFSET_ID]);
           if (result.length >= limit) return skipped;
         }
       }

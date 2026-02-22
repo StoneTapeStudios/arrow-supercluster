@@ -128,30 +128,65 @@ The reusable buffers with `subarray()` are a secondary win — they eliminate pe
 
 ---
 
+## Attempt 3: Internal `_getChildIndices()` to eliminate hierarchy traversal allocations (SHIPPED)
+
+### Hypothesis
+
+`getClusterExpansionZoom()` and `_appendLeafIndices()` (used by `getLeaves()`) both called the public `getChildren()` method, which allocates 4 typed arrays per call. These internal callers don't need positions or typed array output — they only read `ids`, `isCluster`, and `pointCounts` to navigate the cluster hierarchy. For deep hierarchies, this creates unnecessary GC pressure.
+
+### Implementation
+
+- Extracted the neighbor-finding logic from `getChildren()` into a new private `_getChildIndices(clusterId)` method that returns `{ indices: number[], data: number[] }` — raw treeData item indices and a reference to the data array. Zero typed array allocation.
+- `getClusterExpansionZoom()` now calls `_getChildIndices()` and reads `OFFSET_NUM` / `OFFSET_ID` directly from `data[k + ...]`.
+- `_appendLeafIndices()` does the same — reads `numPts`, cluster IDs, and point IDs directly from the flat data array.
+- `getChildren()` (public API) now delegates to `_getChildIndices()` for the neighbor search, then builds the typed array output only for external callers.
+
+### Results
+
+No regressions on any metric. All 17 tests pass. The query benchmark is unaffected (these methods aren't in the `getClusters` hot path), but `getClusterExpansionZoom` and `getLeaves` no longer allocate 4 typed arrays per recursion step.
+
+At 200k points, the summary held steady at 8.65× average query speedup — confirming this was a clean structural refactor with no performance cost.
+
+### Why It Worked
+
+Same principle as Attempt 2: avoid allocating output structures on internal hot paths that don't need them. The typed array wrapping in `getChildren()` exists for the public API contract (rendering pipelines expect `ClusterOutput`). Internal hierarchy traversal only needs raw index lookups into the flat `treeData` array, which is what `_getChildIndices()` provides.
+
+---
+
 ## Future Optimization Candidates
 
-### 1. Reduce `getChildren()` allocations in hierarchy navigation ← NEXT TARGET
-
-**Problem**: `getClusterExpansionZoom()` and `getLeaves()` call `getChildren()` repeatedly, each call allocating 4 typed arrays. For deep cluster hierarchies this creates GC pressure. Unlike `getClusters()` (which now uses reusable buffers), `getChildren()` still allocates fresh arrays per call.
-
-**Approach**: Add an internal `_getChildIndices()` that returns raw index arrays without typed array wrapping, used only by internal hierarchy methods (`_appendLeafIndices`, `getClusterExpansionZoom`). Keep `getChildren()` as the public API with full typed array output. This is low-risk, isolated to internal methods, and directly reduces GC pressure in the hierarchy traversal path.
-
-**Why this is next**: It's the same pattern we just applied to `getClusters()` — avoid unnecessary allocation on internal hot paths. The implementation is straightforward and the risk is minimal.
-
-### 2. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing
+### 1. Pre-size `nextData` in `_cluster()` to reduce `.push()` resizing
 
 **Problem**: `_cluster()` builds `nextData` as an empty `number[]` and grows it via `.push()`. V8 handles this well, but at 1M points the array goes through many internal resizes. Since the output size is always ≤ the input size (clustering reduces count), we could pre-allocate `nextData` at the input's length and use index writes + a cursor, then truncate with `.length = cursor` at the end.
 
 **Tradeoff**: This is the same direction as Attempt 1 but staying within `number[]` (no `Float64Array`). V8's packed double array with pre-set `.length` avoids resize copies while keeping the lightweight memory model. Worth benchmarking in isolation — the risk is low since it doesn't change the storage type.
 
-### 3. Web Worker offloading (Phase 4 item)
+### 2. Web Worker offloading (Phase 4 item)
 
 **Problem**: `engine.load()` takes ~1s at 200k points, ~5.5s at 1M points, blocking the main thread.
 
 **Approach**: Move `load()` to a Web Worker. KDBush stores its index as a single `ArrayBuffer` which is transferable between threads. The `treeData` arrays could also be transferred. This doesn't make load _faster_, but it unblocks the main thread.
 
-### 4. Benchmark the _real_ pipeline, not just the engine
+### 3. Benchmark the _real_ pipeline, not just the engine (DONE)
 
-**Problem**: The current benchmark compares engine-to-engine, but the real win is the full pipeline: GeoJSON fetch + parse + Supercluster vs GeoParquet fetch + Arrow Table + ArrowClusterEngine. The ~84% wire size reduction and elimination of JSON parsing are likely the biggest real-world wins, but we're not measuring them yet.
+Implemented as `benchmarks/pipeline.ts`. Run via `pnpm bench:pipeline` (or `--1m` for 1M points).
 
-**Approach**: Add a benchmark that simulates the full pipeline — serialize to JSON/Parquet, deserialize, load into engine, query. This would show the true end-to-end advantage.
+Measures the full end-to-end cost: serialize → wire size → deserialize → engine load → query. GeoJSON pipeline uses `JSON.stringify` / `JSON.parse` + Supercluster. Arrow pipeline uses `tableToIPC` / `tableFromIPC` + ArrowClusterEngine.
+
+Six sections: wire size, serialization time, deserialization time, full pipeline, per-stage breakdown (at largest dataset), and a visual time distribution showing where the time goes.
+
+**Results at 200k points (deserialize → load → query @ z6):**
+
+- Wire size: ~84% smaller (24.2MB GeoJSON → 3.8MB Arrow IPC)
+- Deserialization: ~4,000× faster (`tableFromIPC` is essentially a pointer cast over the IPC buffer — ~27µs vs ~112ms for `JSON.parse`)
+- Engine load: ~1× (parity — KDBush index build dominates both pipelines)
+- Query (z6): ~29× faster (typed array output vs GeoJSON Feature allocation)
+- End-to-end: ~1.2× faster overall
+
+**Key insight**: Engine load dominates both pipelines (~86% of GeoJSON time, ~100% of Arrow time). The Arrow pipeline's massive deserialization win (~112ms → ~27µs) is dwarfed by the ~945ms load step. This means the real-world user-facing wins are:
+
+1. **Wire size** (84% smaller transfer — the biggest practical win for users on slow connections)
+2. **Query speed** (29× at mid-zoom — matters for every pan/zoom interaction after initial load)
+3. **Deserialization** (eliminates ~112ms of JSON parsing — noticeable but not dominant)
+
+Load time parity confirms that the KDBush spatial index build is the true bottleneck, validating Future Optimization #2 (Web Worker offloading) as the next high-impact target.
