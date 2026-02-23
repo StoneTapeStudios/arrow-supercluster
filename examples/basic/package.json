@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.10",
+    "@deck.gl/geo-layers": "^9.1.10",
     "@deck.gl/layers": "^9.1.10",
     "apache-arrow": "^20.0.0",
     "arrow-cluster-layer": "workspace:*"

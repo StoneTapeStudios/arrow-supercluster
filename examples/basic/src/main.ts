@@ -1,4 +1,6 @@
 import { Deck, MapView } from "@deck.gl/core";
+import { BitmapLayer } from "@deck.gl/layers";
+import { TileLayer } from "@deck.gl/geo-layers";
 import {
   makeVector,
   vectorFromArray,
@@ -24,7 +26,6 @@ function seededRandom(seed: number) {
 const NUM_POINTS = 50_000;
 const rand = seededRandom(42);
 
-// Generate clusters of points around world cities
 const CITY_CENTERS: [number, number, string][] = [
   [-122.42, 37.78, "San Francisco"],
   [-73.97, 40.76, "New York"],
@@ -50,7 +51,6 @@ const cityNames: string[] = [];
 for (let i = 0; i < NUM_POINTS; i++) {
   const cityIdx = Math.floor(rand() * CITY_CENTERS.length);
   const [cLng, cLat, name] = CITY_CENTERS[cityIdx];
-  // Spread points around the city center with gaussian-ish distribution
   const spread = 2 + rand() * 5;
   lngs[i] = cLng + (rand() - 0.5) * spread;
   lats[i] = Math.max(-85, Math.min(85, cLat + (rand() - 0.5) * spread));
@@ -102,9 +102,31 @@ function updateStats() {
 }
 updateStats();
 
-// --- Deck.gl setup ---
+// --- Basemap layer (free OSM tiles, no token required) ---
+// Ref: https://deck.gl/docs/api-reference/geo-layers/tile-layer
 
-function createLayer() {
+function createBasemapLayer() {
+  return new TileLayer({
+    id: "osm-basemap",
+    data: "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    maxZoom: 19,
+    minZoom: 0,
+    renderSubLayers: (props) => {
+      const {
+        boundingBox: [[west, south], [east, north]],
+      } = props.tile;
+      return new BitmapLayer(props, {
+        data: undefined,
+        image: props.data,
+        bounds: [west, south, east, north],
+      });
+    },
+  });
+}
+
+// --- Cluster layer ---
+
+function createClusterLayer() {
   return new ArrowClusterLayer({
     id: "arrow-clusters",
     data: table,
@@ -126,6 +148,8 @@ function createLayer() {
   });
 }
 
+// --- Deck.gl setup ---
+
 const deckInstance = new Deck({
   views: new MapView({ repeat: true }),
   initialViewState: {
@@ -134,7 +158,7 @@ const deckInstance = new Deck({
     zoom: 2,
   },
   controller: true,
-  layers: [createLayer()],
+  layers: [createBasemapLayer(), createClusterLayer()],
   getTooltip: () => null,
 
   onViewStateChange: ({ viewState }) => {
@@ -172,13 +196,17 @@ const deckInstance = new Deck({
       // Set focused on hover
       if (pickInfo.isCluster && pickInfo.clusterId !== focusedClusterId) {
         focusedClusterId = pickInfo.clusterId;
-        deckInstance.setProps({ layers: [createLayer()] });
+        deckInstance.setProps({
+          layers: [createBasemapLayer(), createClusterLayer()],
+        });
       }
     } else {
       hoverEl.style.display = "none";
       if (focusedClusterId !== null) {
         focusedClusterId = null;
-        deckInstance.setProps({ layers: [createLayer()] });
+        deckInstance.setProps({
+          layers: [createBasemapLayer(), createClusterLayer()],
+        });
       }
     }
   },
@@ -187,16 +215,19 @@ const deckInstance = new Deck({
     const pickInfo = info as ArrowClusterPickingInfo;
     if (pickInfo.index >= 0 && pickInfo.isCluster) {
       if (selectedClusterId === pickInfo.clusterId) {
-        // Deselect
         selectedClusterId = null;
       } else {
         selectedClusterId = pickInfo.clusterId;
       }
-      deckInstance.setProps({ layers: [createLayer()] });
+      deckInstance.setProps({
+        layers: [createBasemapLayer(), createClusterLayer()],
+      });
     } else {
       if (selectedClusterId !== null) {
         selectedClusterId = null;
-        deckInstance.setProps({ layers: [createLayer()] });
+        deckInstance.setProps({
+          layers: [createBasemapLayer(), createClusterLayer()],
+        });
       }
     }
   },

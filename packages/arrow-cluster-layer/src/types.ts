@@ -63,4 +63,6 @@ export interface ArrowClusterLayerState {
   clusterOutput: ClusterOutput | null;
   /** Set of all descendant point IDs for the focused cluster. */
   focusedChildrenIds: Set<number> | null;
+  /** The integer zoom level we last queried clusters for. */
+  lastQueriedZoom: number;
 }

@@ -41,6 +41,15 @@ const defaultProps: DefaultProps<ArrowClusterLayerProps> = {
   selectedClusterId: null,
   focusedClusterId: null,
   viewType: "map",
+  // Prevent engine rebuild when the same Arrow Table reference is passed.
+  // deck.gl's default shallow comparison of `data` fires `dataChanged` on every
+  // setProps call because a new layer instance is created. This comparator tells
+  // deck.gl to treat the data as unchanged when the reference is identical.
+  // Ref: https://deck.gl/docs/api-reference/core/layer#datacomparator
+  dataComparator: {
+    type: "function",
+    value: (newData: unknown, oldData: unknown) => newData === oldData,
+  },
 };
 
 export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
@@ -49,31 +58,54 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
 
   state!: ArrowClusterLayerState;
 
+  /**
+   * Override default shouldUpdateState to also respond to viewport changes.
+   * The default CompositeLayer implementation ignores viewport changes, but we
+   * need to re-query clusters when the integer zoom level changes.
+   * Ref: https://deck.gl/docs/developer-guide/custom-layers/layer-lifecycle
+   */
+  shouldUpdateState({
+    changeFlags,
+  }: UpdateParameters<ArrowClusterLayer>): boolean {
+    return changeFlags.somethingChanged;
+  }
+
   initializeState(): void {
     this.state = {
       engine: null,
       clusterOutput: null,
       focusedChildrenIds: null,
+      lastQueriedZoom: -Infinity,
     };
   }
 
   updateState(params: UpdateParameters<ArrowClusterLayer>): void {
     const { props, oldProps, changeFlags } = params;
 
-    // Rebuild engine when data or clustering config changes
+    let engineChanged = false;
+
+    // Rebuild engine only when the actual table reference changes or clustering
+    // config props change. The dataComparator default prop prevents spurious
+    // dataChanged flags, but we add a belt-and-suspenders reference check here
+    // so that even if dataChanged fires, we skip the expensive engine.load()
+    // when the underlying Arrow Table hasn't actually been replaced.
+    const dataActuallyChanged =
+      changeFlags.dataChanged && props.data !== oldProps.data;
     if (
-      changeFlags.dataChanged ||
+      dataActuallyChanged ||
       props.clusterRadius !== oldProps.clusterRadius ||
       props.clusterMaxZoom !== oldProps.clusterMaxZoom ||
       props.clusterMinZoom !== oldProps.clusterMinZoom ||
       props.clusterMinPoints !== oldProps.clusterMinPoints
     ) {
       this._rebuildEngine(props);
+      engineChanged = true;
     }
 
-    // Re-query clusters when zoom changes
-    if (changeFlags.viewportChanged || changeFlags.dataChanged) {
-      this._queryClusters();
+    // Only re-query clusters when the integer zoom actually changes
+    const zoom = Math.floor(this.context.viewport.zoom ?? 0);
+    if (engineChanged || zoom !== this.state.lastQueriedZoom) {
+      this._queryClusters(zoom);
     }
 
     // Update focused children set when focusedClusterId changes
@@ -251,16 +283,15 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
     this.setState({ engine });
   }
 
-  private _queryClusters(): void {
+  private _queryClusters(zoom: number): void {
     const { engine } = this.state;
     if (!engine) {
-      this.setState({ clusterOutput: null });
+      this.setState({ clusterOutput: null, lastQueriedZoom: zoom });
       return;
     }
 
-    const zoom = Math.floor(this.context.viewport.zoom ?? 0);
     const clusterOutput = engine.getClusters([-180, -85, 180, 85], zoom);
-    this.setState({ clusterOutput });
+    this.setState({ clusterOutput, lastQueriedZoom: zoom });
   }
 
   private _updateFocusedChildren(
