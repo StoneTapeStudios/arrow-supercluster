@@ -1,48 +1,25 @@
 # arrow-cluster-layer — Implementation Phases
 
-## Phase 1: Monorepo Scaffold & Engine Package (arrow-supercluster)
+## Phase 1: Monorepo Scaffold & Engine Package (arrow-supercluster) ✅ COMPLETE
 
 **Goal**: A working, tested `ArrowClusterEngine` that produces identical clustering results to Supercluster, published as `arrow-supercluster`.
 
-### Phase 1a: Scaffold the Monorepo
+### Phase 1a: Scaffold the Monorepo ✅
 
-1. Initialize the monorepo root with pnpm workspaces
-2. Create `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.workspace.ts`
-3. Scaffold `packages/arrow-supercluster` with TypeScript, tsdown, vitest
-4. Scaffold `packages/arrow-cluster-layer` as an empty shell (implemented in Phase 2)
-5. Verify `pnpm build` and `pnpm test` work across the workspace
+1. ✅ Initialize the monorepo root with pnpm workspaces
+2. ✅ Create `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.workspace.ts`
+3. ✅ Scaffold `packages/arrow-supercluster` with TypeScript, tsdown, vitest
+4. ✅ Scaffold `packages/arrow-cluster-layer` as an empty shell (implemented in Phase 2)
+5. ✅ Verify `pnpm build` and `pnpm test` work across the workspace
 
-### Phase 1b: Implement ArrowClusterEngine
+### Phase 1b: Implement ArrowClusterEngine ✅
 
-1. **Implement `arrow-cluster-engine.ts`**
-   - Port Supercluster's ~400 lines to work with Arrow typed arrays
-   - `load(table, geometryColumn, idColumn)` — reads Arrow Float64Array directly, skips null geometries
-   - `getClusters(bbox, zoom)` — returns `ClusterOutput` (typed arrays), clamps bbox to Mercator limits
-   - `getChildren(clusterId)` — hierarchy navigation
-   - `getLeaves(clusterId, limit?, offset?)` — returns Arrow row indices
-   - `getClusterExpansionZoom(clusterId)` — same algorithm as Supercluster
-   - `getOriginZoom(clusterId)` / `getOriginId(clusterId)` — ID decoding utilities
-
-2. **Implement `arrow-helpers.ts`**
-   - `getCoordBuffer(geomCol)` — abstracts the `data[0].children[0].values` access pattern
-   - Fallback to `geomCol.get(i)` if internal layout changes
-   - Single-chunk only in Phase 1
-
-3. **Implement `mercator.ts`**
-   - `lngX(lng)`, `latY(lat)`, `xLng(x)`, `yLat(y)` — same as Supercluster
-   - `fround()` wrapper for `Math.fround`
-
-4. **Implement `types.ts`**
-   - `ClusterOutput` interface
-   - `ArrowClusterEngineOptions` (radius, minZoom, maxZoom, minPoints)
-
-5. **Write correctness tests**
-   - Load the same point set into both Supercluster and ArrowClusterEngine
-   - Compare cluster counts, positions, and hierarchy at every zoom level
-   - Use Supercluster's own test data as fixtures
-   - Test edge cases: antimeridian wrapping, poles, single-point clusters, empty data, max zoom, null geometries
-
-6. **Publish `arrow-supercluster@0.1.0`**
+1. ✅ **Implement `arrow-cluster-engine.ts`** — full port with reusable output buffers + direct coordinate reads
+2. ✅ **Implement `arrow-helpers.ts`** — `getCoordBuffer()` with single-chunk access
+3. ✅ **Implement `mercator.ts`** — `lngX`, `latY`, `xLng`, `yLat`, `fround`
+4. ✅ **Implement `types.ts`** — `ClusterOutput`, `ArrowClusterEngineOptions`
+5. ✅ **Write correctness tests** — 17 tests passing (7 engine, 10 edge cases)
+6. ⬜ **Publish `arrow-supercluster@0.1.0`** — not yet published to npm
 
 ---
 
@@ -52,38 +29,44 @@
 
 ### Tasks
 
-1. **Implement `style-helpers.ts`**
-   - `computeFillColors(clusterOutput, styleOptions)` → `Uint8Array`
-   - `computeRadii(clusterOutput, totalPoints)` → `Float32Array`
-   - `computeTextColors(fillColors, textOpacity)` → `Uint8Array`
-   - `computeTexts(clusterOutput)` → `(string | null)[]`
-   - Unit test all functions
-
-2. **Implement `arrow-cluster-layer.ts`**
-   - Extend `CompositeLayer`
-   - `updateState`: create `ArrowClusterEngine` when data changes, query clusters on zoom change
-   - `renderLayers`: ScatterplotLayer (binary attributes) + TextLayer
-   - `getPickingInfo`: resolve picked index → cluster/point data
-   - Focused/selected cluster highlighting via descendant tracking
-   - Globe view text angle flip
-   - Expose `getClusterExpansionZoom(clusterId)` as public method (delegates to engine)
-
-3. **Implement `picking.ts`**
-   - Cluster pick → `engine.getLeaves()` → Arrow row indices
-   - Point pick → single Arrow row index
-   - Return `ArrowClusterPickingInfo` with indices and optional row materialization
-
-4. **Implement `types.ts`**
-   - `ArrowClusterLayerProps`
-   - `ArrowClusterPickingInfo`
+1. ✅ **Implement `types.ts`**
+   - `ArrowClusterLayerProps` extending `CompositeLayerProps`
+   - `ArrowClusterPickingInfo` with `isCluster`, `clusterId`, `pointCount`, `arrowIndices`, `rows`
    - `ClusterStyleOptions`, `ColorRGBA`
+   - `ArrowClusterLayerState` (internal, with index signature for deck.gl compatibility)
 
-5. **Re-export engine types from index.ts**
-   - So consumers only need `arrow-cluster-layer` as a dependency
+2. ✅ **Implement `style-helpers.ts`**
+   - `computeFillColors(output, primary, secondary, selected, focusedId, focusedChildren, selectedId)` → `Uint8Array`
+   - `computeRadii(output, totalPoints)` → `Float32Array` (log-scaled, baseSize=4, scaleFactor=50)
+   - `computeTextColors(fillColors, textOpacity)` → `Uint8Array` (sRGB-linearized luminance for contrast)
+   - `computeTexts(output)` → `(string | null)[]`
+   - ⬜ Unit tests (not yet written)
 
-6. **Write README with usage examples**
+3. ✅ **Implement `picking.ts`**
+   - `resolvePickingInfo()` — cluster pick → `engine.getLeaves()` → Arrow row indices + materialized rows
+   - Point pick → single Arrow row index → `table.get(id)`
+   - Returns `ArrowClusterPickingInfo`
 
-7. **Publish `arrow-cluster-layer@0.1.0`**
+4. ✅ **Implement `arrow-cluster-layer.ts`**
+   - Extends `CompositeLayer` with deck.gl v9 `DefaultProps` (uses `"number"`, `"color"` type strings)
+   - `initializeState` / `updateState`: creates `ArrowClusterEngine` on data/config change, queries clusters on viewport change
+   - `renderLayers`: `ScatterplotLayer` (binary attributes via `data.attributes`) + `TextLayer` (accessor functions)
+   - `getPickingInfo`: delegates to `resolvePickingInfo()`
+   - Focused/selected cluster highlighting via descendant tracking (`_updateFocusedChildren`)
+   - Globe view text angle flip (180° when globe && zoom ≤ 12)
+   - `getClusterExpansionZoom(clusterId)` exposed as public method
+   - `parameters.cullMode`: `"back"` for circles, `"front"` for text (WebGPU-style string constants per v9)
+
+5. ✅ **Re-export engine types from `index.ts`**
+   - Exports layer, types, style helpers, and re-exports `ArrowClusterEngine` + `ClusterOutput` + `ArrowClusterEngineOptions`
+
+6. ✅ **Build verified** — both packages build cleanly (`pnpm -r build`), layer package ~10KB minified
+
+7. ⬜ **Write unit tests** — `style-helpers.test.ts`, `picking.test.ts`
+
+8. ⬜ **Write README with usage examples**
+
+9. ⬜ **Publish `arrow-cluster-layer@0.1.0`**
 
 ### Correctness Validation
 
