@@ -1,4 +1,4 @@
-import { Deck, MapView } from "@deck.gl/core";
+import { Deck, MapView, FlyToInterpolator } from "@deck.gl/core";
 import { BitmapLayer } from "@deck.gl/layers";
 import { TileLayer } from "@deck.gl/geo-layers";
 import {
@@ -126,8 +126,10 @@ function createBasemapLayer() {
 
 // --- Cluster layer ---
 
+let clusterLayerRef: ArrowClusterLayer | null = null;
+
 function createClusterLayer() {
-  return new ArrowClusterLayer({
+  const layer = new ArrowClusterLayer({
     id: "arrow-clusters",
     data: table,
     geometryColumn: "geometry",
@@ -146,6 +148,8 @@ function createClusterLayer() {
     focusedClusterId,
     pickable: true,
   });
+  clusterLayerRef = layer;
+  return layer;
 }
 
 // --- Deck.gl setup ---
@@ -214,21 +218,20 @@ const deckInstance = new Deck({
   onClick: (info) => {
     const pickInfo = info as ArrowClusterPickingInfo;
     if (pickInfo.index >= 0 && pickInfo.isCluster) {
-      if (selectedClusterId === pickInfo.clusterId) {
-        selectedClusterId = null;
-      } else {
-        selectedClusterId = pickInfo.clusterId;
-      }
+      const expansionZoom = clusterLayerRef
+        ? clusterLayerRef.getClusterExpansionZoom(pickInfo.clusterId)
+        : currentZoom + 2;
+
       deckInstance.setProps({
+        initialViewState: {
+          longitude: pickInfo.coordinate?.[0] ?? 0,
+          latitude: pickInfo.coordinate?.[1] ?? 0,
+          zoom: Math.min(expansionZoom, 20),
+          transitionDuration: 500,
+          transitionInterpolator: new FlyToInterpolator(),
+        },
         layers: [createBasemapLayer(), createClusterLayer()],
       });
-    } else {
-      if (selectedClusterId !== null) {
-        selectedClusterId = null;
-        deckInstance.setProps({
-          layers: [createBasemapLayer(), createClusterLayer()],
-        });
-      }
     }
   },
 });
