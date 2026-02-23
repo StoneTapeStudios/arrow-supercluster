@@ -4,7 +4,7 @@
 
 **Goal**: A working, tested `ArrowClusterEngine` that produces identical clustering results to Supercluster, published as `arrow-supercluster`.
 
-### Phase 1a: Scaffold the Monorepo ✅
+### Phase 1a: Scaffold the **Monorepo** ✅
 
 1. ✅ Initialize the monorepo root with pnpm workspaces
 2. ✅ Create `pnpm-workspace.yaml`, `tsconfig.base.json`, `vitest.workspace.ts`

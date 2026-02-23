@@ -1,13 +1,11 @@
 import {
   CompositeLayer,
   type UpdateParameters,
-  type PickingInfo,
   type GetPickingInfoParams,
   type DefaultProps,
 } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { ArrowClusterEngine } from "arrow-supercluster";
-import type { ClusterOutput } from "arrow-supercluster";
 import type { Table } from "apache-arrow";
 import {
   computeFillColors,

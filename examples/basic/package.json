@@ -1,0 +1,19 @@
+{
+  "name": "arrow-cluster-layer-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.1.10",
+    "@deck.gl/layers": "^9.1.10",
+    "apache-arrow": "^20.0.0",
+    "arrow-cluster-layer": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "typescript": "^5.0.0"
+  }
+}
