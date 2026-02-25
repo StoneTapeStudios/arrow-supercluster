@@ -20,6 +20,9 @@ dist/
 .env
 .env.*
 
+# Generated data
+examples/basic/public/data/
+
 # Lock files (using pnpm)
 package-lock.json
 yarn.lock

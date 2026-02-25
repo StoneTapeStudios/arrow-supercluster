@@ -7,7 +7,9 @@
     "bench": "pnpm --filter arrow-supercluster bench",
     "bench:pipeline": "pnpm --filter arrow-supercluster bench:pipeline",
     "lint": "pnpm -r lint",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "example": "pnpm --filter arrow-cluster-layer-example dev",
+    "generate-data": "pnpm --filter arrow-cluster-layer-example generate-data"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

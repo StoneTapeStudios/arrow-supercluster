@@ -4,17 +4,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "generate-data": "npx tsx scripts/generate-geoparquet.ts"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.10",
     "@deck.gl/geo-layers": "^9.1.10",
     "@deck.gl/layers": "^9.1.10",
     "apache-arrow": "^20.0.0",
-    "arrow-cluster-layer": "workspace:*"
+    "arrow-cluster-layer": "workspace:*",
+    "parquet-wasm": "^0.7.1"
   },
   "devDependencies": {
+    "tsx": "^4.0.0",
     "vite": "^6.0.0",
+    "vite-plugin-wasm": "^3.4.1",
     "typescript": "^5.0.0"
   }
 }

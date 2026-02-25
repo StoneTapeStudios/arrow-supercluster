@@ -1,6 +1,8 @@
 {
   "name": "arrow-supercluster",
   "version": "0.1.0",
+  "description": "Arrow-native spatial clustering engine — Supercluster reimplemented for Apache Arrow tables",
+  "license": "ISC",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
