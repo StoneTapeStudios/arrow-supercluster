@@ -59,7 +59,7 @@ export class ArrowClusterEngine {
       );
     }
 
-    const coordValues = getCoordBuffer(geomCol);
+    const coordValues = getCoordBuffer({ geomCol });
     this.coordValues = coordValues;
 
     // Build the initial flat data array from Arrow coordinates

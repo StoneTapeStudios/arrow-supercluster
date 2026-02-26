@@ -62,3 +62,30 @@ export function generateTestPoints(count: number): [number, number][] {
   }
   return points;
 }
+
+/**
+ * Build a multi-chunk Arrow Table by splitting coords into `chunkCount` batches.
+ * Each batch is a separate RecordBatch — simulates what parquet-wasm produces
+ * with small batchSize or what happens with multiple IPC record batches.
+ */
+export function buildMultiChunkArrowTable(
+  coords: [number, number][],
+  chunkCount: number,
+): Table {
+  const chunkSize = Math.ceil(coords.length / chunkCount);
+  const tables: Table[] = [];
+
+  for (let c = 0; c < chunkCount; c++) {
+    const start = c * chunkSize;
+    const end = Math.min(start + chunkSize, coords.length);
+    const slice = coords.slice(start, end);
+    if (slice.length === 0) continue;
+    tables.push(buildArrowTable(slice));
+  }
+
+  // Combine batches from all small tables into one multi-chunk table.
+  // Since all tables were built with the same schema via buildArrowTable,
+  // Arrow JS accepts the batch combination.
+  const allBatches = tables.flatMap((t) => t.batches);
+  return new Table(allBatches);
+}
