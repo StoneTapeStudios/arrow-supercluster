@@ -3,7 +3,6 @@ import {
   vectorFromArray,
   Table,
   Float64,
-  Int32,
   Field,
   FixedSizeList,
 } from "apache-arrow";
@@ -34,9 +33,11 @@ export function buildArrowTable(coords: [number, number][]): Table {
 /**
  * Build GeoJSON features from coordinate array (for Supercluster comparison).
  */
-export function buildGeoJSON(
-  coords: [number, number][],
-): GeoJSON.Feature<GeoJSON.Point, { id: number }>[] {
+export function buildGeoJSON(coords: [number, number][]): {
+  type: "Feature";
+  properties: { id: number };
+  geometry: { type: "Point"; coordinates: [number, number] };
+}[] {
   return coords.map((c, i) => ({
     type: "Feature" as const,
     properties: { id: i },

@@ -132,7 +132,6 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       viewType,
     } = this.props;
 
-    const table = this.props.data as Table;
     const totalPoints = engine.indexedPointCount;
 
     // Compute style arrays

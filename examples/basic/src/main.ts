@@ -11,7 +11,6 @@ import type { ArrowClusterPickingInfo } from "arrow-cluster-layer";
 const PARQUET_URL = "/data/points-2m.parquet";
 
 async function loadParquetTable(): Promise<Table> {
-  // Initialize parquet-wasm (loads the .wasm binary once)
   await initParquetWasm();
 
   const resp = await fetch(PARQUET_URL);
@@ -19,10 +18,35 @@ async function loadParquetTable(): Promise<Table> {
     throw new Error(`Failed to fetch ${PARQUET_URL}: ${resp.status}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
 
-  // batchSize must cover the full file to get a single-chunk Arrow table.
-  // This lets getCoordBuffer() use the zero-copy fast path (reads data[0] only).
   const wasmTable = readParquet(buf, { batchSize: 2_100_000 });
   return tableFromIPC(wasmTable.intoIPCStream());
+}
+
+// --- Filter mask builder ---
+
+/**
+ * Build a Uint8Array mask from the city column and active city set.
+ * 0 = excluded, 1 = included. O(n) single pass.
+ */
+function buildCityMask(table: Table, activeCities: Set<string>): Uint8Array {
+  const mask = new Uint8Array(table.numRows);
+  const cityCol = table.getChild("city")!;
+  for (let i = 0; i < table.numRows; i++) {
+    mask[i] = activeCities.has(cityCol.get(i) as string) ? 1 : 0;
+  }
+  return mask;
+}
+
+/**
+ * Extract unique city names from the table's city column.
+ */
+function getUniqueCities(table: Table): string[] {
+  const cityCol = table.getChild("city")!;
+  const seen = new Set<string>();
+  for (let i = 0; i < table.numRows; i++) {
+    seen.add(cityCol.get(i) as string);
+  }
+  return Array.from(seen).sort();
 }
 
 // --- UI state ---
@@ -30,23 +54,100 @@ async function loadParquetTable(): Promise<Table> {
 let selectedClusterId: number | null = null;
 let focusedClusterId: number | null = null;
 let currentZoom = 2;
+let activeCities: Set<string> = new Set();
+let filterMask: Uint8Array | null = null;
 
 const statsEl = document.getElementById("stats")!;
 const hoverEl = document.getElementById("hover-info")!;
 
-function updateStats(table: Table) {
+function updateStats(table: Table, filteredCount: number) {
+  const total = table.numRows.toLocaleString();
+  const filtered = filteredCount.toLocaleString();
+  const isFiltered = filterMask !== null;
   statsEl.innerHTML = `
-    Points: <span class="stat">${table.numRows.toLocaleString()}</span><br>
+    Points: <span class="stat">${total}</span>
+    ${isFiltered ? `(showing <span class="stat">${filtered}</span>)` : ""}<br>
     Zoom: <span class="stat">${currentZoom}</span><br>
-    Arrow Table rows: <span class="stat">${table.numRows.toLocaleString()}</span><br>
+    Cities: <span class="stat">${activeCities.size}</span> active<br>
     <br>
     <em>Click a cluster to select it.<br>
     Hover to see details.<br>
-    Scroll to zoom.</em>
+    Toggle regions in the filter panel.</em>
   `;
 }
 
-// --- Basemap layer (free OSM tiles, no token required) ---
+// --- Filter panel ---
+
+function createFilterPanel(
+  cities: string[],
+  onToggle: (city: string) => void,
+  onToggleAll: (selectAll: boolean) => void,
+): HTMLElement {
+  const panel = document.createElement("div");
+  panel.id = "filter-panel";
+
+  const header = document.createElement("div");
+  header.className = "filter-header";
+  header.innerHTML = `<h3>Region Filter</h3>`;
+
+  const controls = document.createElement("div");
+  controls.className = "filter-controls";
+
+  const allBtn = document.createElement("button");
+  allBtn.textContent = "All";
+  allBtn.onclick = () => onToggleAll(true);
+
+  const noneBtn = document.createElement("button");
+  noneBtn.textContent = "None";
+  noneBtn.onclick = () => onToggleAll(false);
+
+  controls.appendChild(allBtn);
+  controls.appendChild(noneBtn);
+  header.appendChild(controls);
+  panel.appendChild(header);
+
+  const hint = document.createElement("div");
+  hint.className = "filter-hint";
+  hint.textContent =
+    "Points are spread around each city center. Clusters may appear outside city limits.";
+  panel.appendChild(hint);
+
+  const list = document.createElement("div");
+  list.className = "filter-list";
+
+  for (const city of cities) {
+    const label = document.createElement("label");
+    label.className = "filter-item";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.dataset.city = city;
+    checkbox.onchange = () => onToggle(city);
+
+    const span = document.createElement("span");
+    span.textContent = city;
+
+    label.appendChild(checkbox);
+    label.appendChild(span);
+    list.appendChild(label);
+  }
+
+  panel.appendChild(list);
+  document.body.appendChild(panel);
+  return panel;
+}
+
+function updateCheckboxes(panel: HTMLElement, activeCities: Set<string>) {
+  const checkboxes = panel.querySelectorAll<HTMLInputElement>(
+    'input[type="checkbox"]',
+  );
+  for (const cb of checkboxes) {
+    cb.checked = activeCities.has(cb.dataset.city!);
+  }
+}
+
+// --- Basemap layer ---
 
 function createBasemapLayer() {
   return new TileLayer({
@@ -89,6 +190,7 @@ function createClusterLayer(table: Table) {
     pointRadiusMaxPixels: 80,
     selectedClusterId,
     focusedClusterId,
+    filterMask,
     pickable: true,
   });
   clusterLayerRef = layer;
@@ -105,7 +207,21 @@ async function main() {
   const loadMs = (performance.now() - t0).toFixed(0);
   console.log(`Loaded ${table.numRows.toLocaleString()} rows in ${loadMs}ms`);
 
-  updateStats(table);
+  // Extract unique cities and initialize all as active
+  const cities = getUniqueCities(table);
+  activeCities = new Set(cities);
+
+  // Helper to count active points in the current mask
+  function getFilteredCount(): number {
+    if (!filterMask) return table.numRows;
+    let count = 0;
+    for (let i = 0; i < filterMask.length; i++) {
+      if (filterMask[i]) count++;
+    }
+    return count;
+  }
+
+  updateStats(table, table.numRows);
 
   const deckInstance = new Deck({
     views: new MapView({ repeat: true }),
@@ -122,7 +238,7 @@ async function main() {
       const newZoom = Math.floor(viewState.zoom);
       if (newZoom !== currentZoom) {
         currentZoom = newZoom;
-        updateStats(table);
+        updateStats(table, getFilteredCount());
       }
       return viewState;
     },
@@ -187,6 +303,48 @@ async function main() {
       }
     },
   });
+
+  // --- Rebuild layers when filter changes ---
+
+  function applyFilter() {
+    // When all cities are active, pass null (no filter) for best performance
+    if (activeCities.size === cities.length) {
+      filterMask = null;
+    } else {
+      filterMask = buildCityMask(table, activeCities);
+    }
+
+    const t = performance.now();
+    deckInstance.setProps({
+      layers: [createBasemapLayer(), createClusterLayer(table)],
+    });
+    console.log(`Filter applied in ${(performance.now() - t).toFixed(0)}ms`);
+
+    updateStats(table, getFilteredCount());
+  }
+
+  // --- Create filter panel ---
+
+  const filterPanel = createFilterPanel(
+    cities,
+    (city) => {
+      if (activeCities.has(city)) {
+        activeCities.delete(city);
+      } else {
+        activeCities.add(city);
+      }
+      applyFilter();
+    },
+    (selectAll) => {
+      if (selectAll) {
+        activeCities = new Set(cities);
+      } else {
+        activeCities.clear();
+      }
+      updateCheckboxes(filterPanel, activeCities);
+      applyFilter();
+    },
+  );
 }
 
 main().catch((err) => {

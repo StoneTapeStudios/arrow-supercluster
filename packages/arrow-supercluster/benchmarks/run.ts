@@ -225,6 +225,75 @@ function benchmarkMemory(points: [number, number][]) {
   return { scTotal, engineTotal };
 }
 
+function benchmarkFilterMask(points: [number, number][]) {
+  const arrowTable = buildArrowTable(points);
+  const numPoints = points.length;
+
+  // Measure mask build time (simulates iterating a string column)
+  const maskBuildTime = measure(
+    () => {
+      const mask = new Uint8Array(numPoints);
+      for (let i = 0; i < numPoints; i++) {
+        mask[i] = i % 2 === 0 ? 1 : 0; // 50% filter
+      }
+    },
+    BENCH_RUNS,
+    WARMUP_RUNS,
+  );
+
+  // Measure load with no mask (baseline)
+  const noMaskTime = measure(
+    () => {
+      const engine = new ArrowClusterEngine(ENGINE_OPTIONS);
+      engine.load(arrowTable);
+    },
+    BENCH_RUNS,
+    WARMUP_RUNS,
+  );
+
+  // Measure load with 50% mask
+  const mask50 = new Uint8Array(numPoints);
+  for (let i = 0; i < numPoints; i++) mask50[i] = i % 2 === 0 ? 1 : 0;
+
+  const mask50Time = measure(
+    () => {
+      const engine = new ArrowClusterEngine(ENGINE_OPTIONS);
+      engine.load(arrowTable, "geometry", "id", mask50);
+    },
+    BENCH_RUNS,
+    WARMUP_RUNS,
+  );
+
+  // Measure load with 10% mask
+  const mask10 = new Uint8Array(numPoints);
+  for (let i = 0; i < numPoints; i++) mask10[i] = i % 10 === 0 ? 1 : 0;
+
+  const mask10Time = measure(
+    () => {
+      const engine = new ArrowClusterEngine(ENGINE_OPTIONS);
+      engine.load(arrowTable, "geometry", "id", mask10);
+    },
+    BENCH_RUNS,
+    WARMUP_RUNS,
+  );
+
+  // Verify indexedPointCount
+  const engine50 = new ArrowClusterEngine(ENGINE_OPTIONS);
+  engine50.load(arrowTable, "geometry", "id", mask50);
+
+  const engine10 = new ArrowClusterEngine(ENGINE_OPTIONS);
+  engine10.load(arrowTable, "geometry", "id", mask10);
+
+  return {
+    maskBuildTime,
+    noMaskTime,
+    mask50Time,
+    mask10Time,
+    indexed50: engine50.indexedPointCount,
+    indexed10: engine10.indexedPointCount,
+  };
+}
+
 function benchmarkDataSize(points: [number, number][]) {
   const geojson = buildGeoJSON(points);
   const arrowTable = buildArrowTable(points);
@@ -418,6 +487,55 @@ async function main() {
   }
   tableDivider();
   console.log("");
+
+  // ── 6. filterMask Performance ─────────────────────────────────────────
+
+  sectionTitle("6", "filterMask Performance  (load with filtered subsets)");
+  console.log("");
+  console.log(
+    colorize(
+      "  Compares engine.load() with no mask vs 50% and 10% masks.",
+      Colors.dim,
+    ),
+  );
+  console.log(
+    colorize(
+      "  KDBush build dominates — fewer points = faster load.",
+      Colors.dim,
+    ),
+  );
+  console.log("");
+  tableHeader(["Points", "No Mask", "50% Mask", "10% Mask", "Mask Build"]);
+
+  for (const size of DATASET_SIZES) {
+    const points = generateTestPoints(size);
+    const fm = benchmarkFilterMask(points);
+    tableRow([
+      fmt(size),
+      fmtMs(fm.noMaskTime.median),
+      fmtMs(fm.mask50Time.median),
+      fmtMs(fm.mask10Time.median),
+      fmtMs(fm.maskBuildTime.median),
+    ]);
+  }
+  tableDivider();
+  console.log("");
+
+  // Verify indexed counts for the largest dataset
+  {
+    const largestSize = DATASET_SIZES[DATASET_SIZES.length - 1];
+    const points = generateTestPoints(largestSize);
+    const fm = benchmarkFilterMask(points);
+    console.log(
+      colorize(
+        `  Indexed counts at ${fmt(largestSize)} points:  ` +
+          `50% mask → ${fmt(fm.indexed50)},  ` +
+          `10% mask → ${fmt(fm.indexed10)}`,
+        Colors.dim,
+      ),
+    );
+    console.log("");
+  }
 
   // ── Summary ─────────────────────────────────────────────────────────────
 
