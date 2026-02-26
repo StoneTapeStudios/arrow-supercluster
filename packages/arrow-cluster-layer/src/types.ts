@@ -38,6 +38,11 @@ export interface ArrowClusterLayerProps extends CompositeLayerProps {
   selectedClusterId?: number | null;
   focusedClusterId?: number | null;
 
+  /** Boolean mask for filtering which points enter the cluster index.
+   *  Length must equal table.numRows. 0 = excluded, non-zero = included.
+   *  When null/undefined, all points are included (default behavior). */
+  filterMask?: Uint8Array | null;
+
   // View
   viewType?: "map" | "globe";
 }

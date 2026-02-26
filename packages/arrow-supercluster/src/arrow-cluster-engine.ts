@@ -46,10 +46,21 @@ export class ArrowClusterEngine {
     this.minPoints = options.minPoints ?? 2;
   }
 
+  /** Number of points actually indexed (after filterMask + null-geometry exclusion). */
+  get indexedPointCount(): number {
+    const topData = this.treeData[this.maxZoom + 1];
+    return topData ? (topData.length / STRIDE) | 0 : 0;
+  }
+
   /**
    * Load an Arrow Table and build the spatial index.
    */
-  load(table: Table, geometryColumn = "geometry", _idColumn = "id"): void {
+  load(
+    table: Table,
+    geometryColumn = "geometry",
+    _idColumn = "id",
+    filterMask?: Uint8Array | null,
+  ): void {
     this.numPoints = table.numRows;
 
     const geomCol = table.getChild(geometryColumn);
@@ -65,6 +76,8 @@ export class ArrowClusterEngine {
     // Build the initial flat data array from Arrow coordinates
     const data: number[] = [];
     for (let i = 0; i < this.numPoints; i++) {
+      if (filterMask && !filterMask[i]) continue;
+
       const lng = coordValues[i * 2];
       const lat = coordValues[i * 2 + 1];
 

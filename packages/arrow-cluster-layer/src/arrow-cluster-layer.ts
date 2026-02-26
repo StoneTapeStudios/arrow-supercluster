@@ -40,6 +40,7 @@ const defaultProps: DefaultProps<ArrowClusterLayerProps> = {
   pointRadiusMaxPixels: { type: "number", value: 100 },
   selectedClusterId: null,
   focusedClusterId: null,
+  filterMask: null,
   viewType: "map",
   // Prevent engine rebuild when the same Arrow Table reference is passed.
   // deck.gl's default shallow comparison of `data` fires `dataChanged` on every
@@ -93,6 +94,7 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       changeFlags.dataChanged && props.data !== oldProps.data;
     if (
       dataActuallyChanged ||
+      props.filterMask !== oldProps.filterMask ||
       props.clusterRadius !== oldProps.clusterRadius ||
       props.clusterMaxZoom !== oldProps.clusterMaxZoom ||
       props.clusterMinZoom !== oldProps.clusterMinZoom ||
@@ -116,7 +118,7 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
 
   renderLayers() {
     const { clusterOutput, engine, focusedChildrenIds } = this.state;
-    if (!clusterOutput || clusterOutput.length === 0) return [];
+    if (!clusterOutput || clusterOutput.length === 0 || !engine) return [];
 
     const {
       primaryColor,
@@ -131,7 +133,7 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
     } = this.props;
 
     const table = this.props.data as Table;
-    const totalPoints = table.numRows;
+    const totalPoints = engine.indexedPointCount;
 
     // Compute style arrays
     const fillColors = computeFillColors(
@@ -279,6 +281,7 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       table,
       props.geometryColumn ?? "geometry",
       props.idColumn ?? "id",
+      props.filterMask ?? null,
     );
     this.setState({ engine });
   }
