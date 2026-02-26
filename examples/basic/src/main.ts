@@ -59,6 +59,16 @@ let filterMask: Uint8Array | null = null;
 
 const statsEl = document.getElementById("stats")!;
 const hoverEl = document.getElementById("hover-info")!;
+const loadingEl = document.getElementById("loading-overlay")!;
+
+function showLoading(message: string) {
+  loadingEl.querySelector(".loading-text")!.textContent = message;
+  loadingEl.classList.remove("hidden");
+}
+
+function hideLoading() {
+  loadingEl.classList.add("hidden");
+}
 
 function updateStats(table: Table, filteredCount: number) {
   const total = table.numRows.toLocaleString();
@@ -200,7 +210,7 @@ function createClusterLayer(table: Table) {
 // --- Boot ---
 
 async function main() {
-  statsEl.innerHTML = "Loading GeoParquet...";
+  showLoading("Loading GeoParquet…");
 
   const t0 = performance.now();
   const table = await loadParquetTable();
@@ -223,6 +233,14 @@ async function main() {
 
   updateStats(table, table.numRows);
 
+  showLoading("Building clusters…");
+
+  // Tracks whether we're waiting for deck.gl to paint after a loading operation.
+  // onAfterRender fires after every GPU frame — we only dismiss the overlay
+  // when a pending operation (initial load or filter rebuild) has rendered.
+  // Ref: https://deck.gl/docs/api-reference/core/deck#onafterrender
+  let loadingPending = true;
+
   const deckInstance = new Deck({
     views: new MapView({ repeat: true }),
     initialViewState: {
@@ -233,6 +251,13 @@ async function main() {
     controller: true,
     layers: [createBasemapLayer(), createClusterLayer(table)],
     getTooltip: () => null,
+
+    onAfterRender: () => {
+      if (loadingPending) {
+        loadingPending = false;
+        hideLoading();
+      }
+    },
 
     onViewStateChange: ({ viewState }) => {
       const newZoom = Math.floor(viewState.zoom);
@@ -314,13 +339,23 @@ async function main() {
       filterMask = buildCityMask(table, activeCities);
     }
 
-    const t = performance.now();
-    deckInstance.setProps({
-      layers: [createBasemapLayer(), createClusterLayer(table)],
-    });
-    console.log(`Filter applied in ${(performance.now() - t).toFixed(0)}ms`);
+    showLoading("Rebuilding clusters…");
 
-    updateStats(table, getFilteredCount());
+    // setTimeout(0) defers to the next macrotask, which guarantees the
+    // browser's rendering pipeline runs first and paints the overlay.
+    // requestAnimationFrame alone isn't reliable — the browser may batch
+    // the RAF callback into the current frame before painting.
+    setTimeout(() => {
+      const t = performance.now();
+      deckInstance.setProps({
+        layers: [createBasemapLayer(), createClusterLayer(table)],
+      });
+      console.log(`Filter applied in ${(performance.now() - t).toFixed(0)}ms`);
+      updateStats(table, getFilteredCount());
+
+      // Let onAfterRender dismiss the overlay after deck.gl paints
+      loadingPending = true;
+    }, 0);
   }
 
   // --- Create filter panel ---
