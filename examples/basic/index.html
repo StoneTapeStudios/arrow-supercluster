@@ -129,6 +129,47 @@
         height: 15px;
         cursor: pointer;
       }
+      #dataset-picker {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        background: rgba(20, 20, 40, 0.92);
+        border: 1px solid rgba(100, 100, 200, 0.3);
+        border-radius: 10px;
+        padding: 14px 18px;
+        font-size: 13px;
+        z-index: 10;
+        backdrop-filter: blur(10px);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #dataset-picker h3 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        color: #a0a0ff;
+      }
+      #dataset-picker button {
+        background: rgba(100, 100, 200, 0.1);
+        border: 1px solid rgba(100, 100, 200, 0.25);
+        border-radius: 6px;
+        color: #c0c0e0;
+        padding: 7px 14px;
+        font-size: 12px;
+        cursor: pointer;
+        text-align: left;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      #dataset-picker button:hover {
+        background: rgba(100, 100, 200, 0.25);
+      }
+      #dataset-picker button.active {
+        background: rgba(100, 100, 200, 0.3);
+        border-color: rgba(160, 160, 255, 0.6);
+        color: #ffffff;
+      }
       #loading-overlay {
         position: fixed;
         inset: 0;

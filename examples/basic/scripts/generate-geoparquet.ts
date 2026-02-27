@@ -1,8 +1,8 @@
 #!/usr/bin/env npx tsx
 /**
- * Generate a GeoParquet file with 1 million synthetic points.
+ * Generate GeoParquet files with synthetic points at multiple sizes.
  *
- * Produces a valid GeoParquet v1.1.0 file using native GeoArrow point encoding
+ * Produces valid GeoParquet v1.1.0 files using native GeoArrow point encoding
  * (FixedSizeList[2] of Float64). This is the exact format that ArrowClusterEngine
  * expects — when read back via parquet-wasm + tableFromIPC, the geometry column
  * is directly consumable with zero conversion.
@@ -11,7 +11,9 @@
  *   pnpm --filter arrow-cluster-layer-example generate-data
  *
  * Output:
+ *   examples/basic/public/data/points-200k.parquet
  *   examples/basic/public/data/points-1m.parquet
+ *   examples/basic/public/data/points-2m.parquet
  *
  * Dependencies (devDependencies of the example):
  *   - apache-arrow (already present)
@@ -45,11 +47,13 @@ const {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const NUM_POINTS = 2_000_000;
-const OUTPUT_PATH = resolve(
-  import.meta.dirname ?? ".",
-  "../public/data/points-2m.parquet",
-);
+const DATASETS: { name: string; count: number }[] = [
+  { name: "points-200k", count: 200_000 },
+  { name: "points-1m", count: 1_000_000 },
+  { name: "points-2m", count: 2_000_000 },
+];
+
+const OUTPUT_DIR = resolve(import.meta.dirname ?? ".", "../public/data");
 
 // City centers with realistic clustering — points are gaussian-distributed
 // around each center so the clustering algorithm has interesting work to do.
@@ -99,119 +103,116 @@ function gaussianPair(rand: () => number): [number, number] {
   ];
 }
 
-// ─── Generate Points ────────────────────────────────────────────────────────
+// ─── Generate and write a single dataset ────────────────────────────────────
 
-console.log(`Generating ${(NUM_POINTS / 1e6).toFixed(0)}M synthetic points...`);
-const t0 = performance.now();
+function generateDataset(numPoints: number, name: string) {
+  const outputPath = resolve(OUTPUT_DIR, `${name}.parquet`);
 
-const rand = seededRandom(42);
-const coords: [number, number][] = new Array(NUM_POINTS);
-const cityNames: string[] = new Array(NUM_POINTS);
+  console.log(`\nGenerating ${name} (${numPoints.toLocaleString()} points)...`);
+  const t0 = performance.now();
 
-// Bounding box tracking for GeoParquet metadata
-let minLng = Infinity,
-  minLat = Infinity,
-  maxLng = -Infinity,
-  maxLat = -Infinity;
+  const rand = seededRandom(42);
+  const coords: [number, number][] = new Array(numPoints);
+  const cityNames: string[] = new Array(numPoints);
 
-for (let i = 0; i < NUM_POINTS; i++) {
-  const cityIdx = Math.floor(rand() * CITY_CENTERS.length);
-  const [cLng, cLat, name] = CITY_CENTERS[cityIdx];
+  let minLng = Infinity,
+    minLat = Infinity,
+    maxLng = -Infinity,
+    maxLat = -Infinity;
 
-  // Gaussian spread: ~68% within 1.5°, ~95% within 3°
-  const [dx, dy] = gaussianPair(rand);
-  const spread = 1.5;
-  const lng = cLng + dx * spread;
-  const lat = Math.max(-85, Math.min(85, cLat + dy * spread));
+  for (let i = 0; i < numPoints; i++) {
+    const cityIdx = Math.floor(rand() * CITY_CENTERS.length);
+    const [cLng, cLat, cityName] = CITY_CENTERS[cityIdx];
 
-  coords[i] = [lng, lat];
-  cityNames[i] = name;
+    const [dx, dy] = gaussianPair(rand);
+    const spread = 1.5;
+    const lng = cLng + dx * spread;
+    const lat = Math.max(-85, Math.min(85, cLat + dy * spread));
 
-  if (lng < minLng) minLng = lng;
-  if (lng > maxLng) maxLng = lng;
-  if (lat < minLat) minLat = lat;
-  if (lat > maxLat) maxLat = lat;
+    coords[i] = [lng, lat];
+    cityNames[i] = cityName;
+
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+
+  console.log(`  Points generated in ${(performance.now() - t0).toFixed(0)}ms`);
+
+  // Build Arrow Table
+  const t1 = performance.now();
+
+  const childField = new Field("xy", new Float64());
+  const listType = new FixedSizeList(2, childField);
+  const geomVector = vectorFromArray(coords, listType);
+
+  const ids = new Int32Array(numPoints);
+  for (let i = 0; i < numPoints; i++) ids[i] = i;
+  const idVector = makeVector(ids);
+
+  const cityVector = vectorFromArray(cityNames, new Utf8());
+
+  const table = new Table({
+    geometry: geomVector,
+    id: idVector,
+    city: cityVector,
+  });
+
+  console.log(
+    `  Arrow Table built in ${(performance.now() - t1).toFixed(0)}ms` +
+      ` (${table.numRows.toLocaleString()} rows)`,
+  );
+
+  // Write GeoParquet
+  const t2 = performance.now();
+
+  const ipcBuffer = tableToIPC(table, "stream");
+  const wasmTable = WasmTable.fromIPCStream(ipcBuffer);
+
+  const geoMetadata = JSON.stringify({
+    version: "1.1.0",
+    primary_column: "geometry",
+    columns: {
+      geometry: {
+        encoding: "point",
+        geometry_types: ["Point"],
+        bbox: [
+          Math.floor(minLng * 1e6) / 1e6,
+          Math.floor(minLat * 1e6) / 1e6,
+          Math.ceil(maxLng * 1e6) / 1e6,
+          Math.ceil(maxLat * 1e6) / 1e6,
+        ],
+      },
+    },
+  });
+
+  const writerProps = new WriterPropertiesBuilder()
+    .setCompression(Compression.ZSTD)
+    .setMaxRowGroupSize(numPoints)
+    .setKeyValueMetadata(new Map([["geo", geoMetadata]]))
+    .build();
+
+  const parquetBytes = writeParquet(wasmTable, writerProps);
+
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, parquetBytes);
+
+  const sizeMB = (parquetBytes.byteLength / (1024 * 1024)).toFixed(2);
+  console.log(
+    `  Written in ${(performance.now() - t2).toFixed(0)}ms → ${outputPath}`,
+  );
+  console.log(`  File size: ${sizeMB} MB`);
 }
 
-console.log(`  Points generated in ${(performance.now() - t0).toFixed(0)}ms`);
+// ─── Main ───────────────────────────────────────────────────────────────────
 
-// ─── Build Arrow Table ──────────────────────────────────────────────────────
+const totalStart = performance.now();
 
-console.log("Building Arrow Table...");
-const t1 = performance.now();
-
-// Geometry: FixedSizeList[2] of Float64 — GeoArrow Point encoding
-const childField = new Field("xy", new Float64());
-const listType = new FixedSizeList(2, childField);
-const geomVector = vectorFromArray(coords, listType);
-
-// ID: Int32 sequential
-const ids = new Int32Array(NUM_POINTS);
-for (let i = 0; i < NUM_POINTS; i++) ids[i] = i;
-const idVector = makeVector(ids);
-
-// City: Utf8
-const cityVector = vectorFromArray(cityNames, new Utf8());
-
-const table = new Table({
-  geometry: geomVector,
-  id: idVector,
-  city: cityVector,
-});
+for (const { name, count } of DATASETS) {
+  generateDataset(count, name);
+}
 
 console.log(
-  `  Arrow Table built in ${(performance.now() - t1).toFixed(0)}ms` +
-    ` (${table.numRows.toLocaleString()} rows, ${table.numCols} columns)`,
+  `\nAll datasets generated in ${(performance.now() - totalStart).toFixed(0)}ms`,
 );
-
-// ─── Write GeoParquet ───────────────────────────────────────────────────────
-
-console.log("Writing GeoParquet...");
-const t2 = performance.now();
-
-// Serialize Arrow Table → IPC stream → parquet-wasm Table
-const ipcBuffer = tableToIPC(table, "stream");
-const wasmTable = WasmTable.fromIPCStream(ipcBuffer);
-
-// GeoParquet v1.1.0 file-level metadata
-// Ref: https://geoparquet.org/releases/v1.1.0/
-const geoMetadata = JSON.stringify({
-  version: "1.1.0",
-  primary_column: "geometry",
-  columns: {
-    geometry: {
-      encoding: "point",
-      geometry_types: ["Point"],
-      bbox: [
-        Math.floor(minLng * 1e6) / 1e6,
-        Math.floor(minLat * 1e6) / 1e6,
-        Math.ceil(maxLng * 1e6) / 1e6,
-        Math.ceil(maxLat * 1e6) / 1e6,
-      ],
-    },
-  },
-});
-
-// Writer properties: Zstd compression + GeoParquet metadata
-// Single row group keeps all data contiguous for efficient Arrow loading.
-// When reading, use { batchSize: NUM_POINTS } to get a single-chunk table
-// so getCoordBuffer() can use the zero-copy fast path.
-const writerProps = new WriterPropertiesBuilder()
-  .setCompression(Compression.ZSTD)
-  .setMaxRowGroupSize(NUM_POINTS)
-  .setKeyValueMetadata(new Map([["geo", geoMetadata]]))
-  .build();
-
-const parquetBytes = writeParquet(wasmTable, writerProps);
-
-// Ensure output directory exists and write
-mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
-writeFileSync(OUTPUT_PATH, parquetBytes);
-
-const sizeMB = (parquetBytes.byteLength / (1024 * 1024)).toFixed(2);
-console.log(
-  `  GeoParquet written in ${(performance.now() - t2).toFixed(0)}ms` +
-    ` → ${OUTPUT_PATH}`,
-);
-console.log(`  File size: ${sizeMB} MB`);
-console.log(`  Total time: ${(performance.now() - t0).toFixed(0)}ms`);

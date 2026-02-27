@@ -46,7 +46,7 @@ pnpm bench:pipeline -- --1m
 
 ## Example App
 
-A standalone demo that loads 2M synthetic points from GeoParquet and renders them with `ArrowClusterLayer` on an OSM basemap.
+A standalone demo that loads synthetic points from GeoParquet and renders them with `ArrowClusterLayer` on an OSM basemap. Includes a dataset picker (200K / 1M / 2M points) and a city filter panel.
 
 ```bash
 # Generate the test dataset (2M points, ~20MB GeoParquet)

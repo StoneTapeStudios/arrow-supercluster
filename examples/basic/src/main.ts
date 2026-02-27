@@ -6,28 +6,53 @@ import initParquetWasm, { readParquet } from "parquet-wasm";
 import { ArrowClusterLayer } from "arrow-cluster-layer";
 import type { ArrowClusterPickingInfo } from "arrow-cluster-layer";
 
+// --- Dataset options ---
+
+type DatasetKey = "200k" | "1m" | "2m";
+
+const DATASETS: Record<
+  DatasetKey,
+  { url: string; label: string; batchSize: number }
+> = {
+  "200k": {
+    url: "/data/points-200k.parquet",
+    label: "200K points (~2 MB)",
+    batchSize: 210_000,
+  },
+  "1m": {
+    url: "/data/points-1m.parquet",
+    label: "1M points (~10 MB)",
+    batchSize: 1_100_000,
+  },
+  "2m": {
+    url: "/data/points-2m.parquet",
+    label: "2M points (~20 MB)",
+    batchSize: 2_100_000,
+  },
+};
+
+let currentDataset: DatasetKey = "200k";
+let wasmReady = false;
+
 // --- Load GeoParquet → Arrow Table ---
 
-const PARQUET_URL = "/data/points-2m.parquet";
+async function loadParquetTable(key: DatasetKey): Promise<Table> {
+  if (!wasmReady) {
+    await initParquetWasm();
+    wasmReady = true;
+  }
 
-async function loadParquetTable(): Promise<Table> {
-  await initParquetWasm();
-
-  const resp = await fetch(PARQUET_URL);
-  if (!resp.ok)
-    throw new Error(`Failed to fetch ${PARQUET_URL}: ${resp.status}`);
+  const { url, batchSize } = DATASETS[key];
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.status}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
 
-  const wasmTable = readParquet(buf, { batchSize: 2_100_000 });
+  const wasmTable = readParquet(buf, { batchSize });
   return tableFromIPC(wasmTable.intoIPCStream());
 }
 
 // --- Filter mask builder ---
 
-/**
- * Build a Uint8Array mask from the city column and active city set.
- * 0 = excluded, 1 = included. O(n) single pass.
- */
 function buildCityMask(table: Table, activeCities: Set<string>): Uint8Array {
   const mask = new Uint8Array(table.numRows);
   const cityCol = table.getChild("city")!;
@@ -37,9 +62,6 @@ function buildCityMask(table: Table, activeCities: Set<string>): Uint8Array {
   return mask;
 }
 
-/**
- * Extract unique city names from the table's city column.
- */
 function getUniqueCities(table: Table): string[] {
   const cityCol = table.getChild("city")!;
   const seen = new Set<string>();
@@ -84,6 +106,36 @@ function updateStats(table: Table, filteredCount: number) {
     Hover to see details.<br>
     Toggle regions in the filter panel.</em>
   `;
+}
+
+// --- Dataset picker ---
+
+function createDatasetPicker(onChange: (key: DatasetKey) => void): HTMLElement {
+  const picker = document.createElement("div");
+  picker.id = "dataset-picker";
+
+  const label = document.createElement("h3");
+  label.textContent = "Dataset";
+  picker.appendChild(label);
+
+  for (const [key, { label: text }] of Object.entries(DATASETS)) {
+    const btn = document.createElement("button");
+    btn.textContent = text;
+    btn.dataset.key = key;
+    if (key === currentDataset) btn.classList.add("active");
+    btn.onclick = () => {
+      if (key === currentDataset) return;
+      picker
+        .querySelectorAll("button")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      onChange(key as DatasetKey);
+    };
+    picker.appendChild(btn);
+  }
+
+  document.body.appendChild(picker);
+  return picker;
 }
 
 // --- Filter panel ---
@@ -212,16 +264,10 @@ function createClusterLayer(table: Table) {
 async function main() {
   showLoading("Loading GeoParquet…");
 
-  const t0 = performance.now();
-  const table = await loadParquetTable();
-  const loadMs = (performance.now() - t0).toFixed(0);
-  console.log(`Loaded ${table.numRows.toLocaleString()} rows in ${loadMs}ms`);
-
-  // Extract unique cities and initialize all as active
+  let table = await loadParquetTable(currentDataset);
   const cities = getUniqueCities(table);
   activeCities = new Set(cities);
 
-  // Helper to count active points in the current mask
   function getFilteredCount(): number {
     if (!filterMask) return table.numRows;
     let count = 0;
@@ -235,10 +281,6 @@ async function main() {
 
   showLoading("Building clusters…");
 
-  // Tracks whether we're waiting for deck.gl to paint after a loading operation.
-  // onAfterRender fires after every GPU frame — we only dismiss the overlay
-  // when a pending operation (initial load or filter rebuild) has rendered.
-  // Ref: https://deck.gl/docs/api-reference/core/deck#onafterrender
   let loadingPending = true;
 
   const deckInstance = new Deck({
@@ -247,6 +289,7 @@ async function main() {
       longitude: 0,
       latitude: 20,
       zoom: 2,
+      minZoom: 2,
     },
     controller: true,
     layers: [createBasemapLayer(), createClusterLayer(table)],
@@ -332,7 +375,6 @@ async function main() {
   // --- Rebuild layers when filter changes ---
 
   function applyFilter() {
-    // When all cities are active, pass null (no filter) for best performance
     if (activeCities.size === cities.length) {
       filterMask = null;
     } else {
@@ -341,10 +383,6 @@ async function main() {
 
     showLoading("Rebuilding clusters…");
 
-    // setTimeout(0) defers to the next macrotask, which guarantees the
-    // browser's rendering pipeline runs first and paints the overlay.
-    // requestAnimationFrame alone isn't reliable — the browser may batch
-    // the RAF callback into the current frame before painting.
     setTimeout(() => {
       const t = performance.now();
       deckInstance.setProps({
@@ -352,11 +390,48 @@ async function main() {
       });
       console.log(`Filter applied in ${(performance.now() - t).toFixed(0)}ms`);
       updateStats(table, getFilteredCount());
-
-      // Let onAfterRender dismiss the overlay after deck.gl paints
       loadingPending = true;
     }, 0);
   }
+
+  // --- Dataset switching ---
+
+  createDatasetPicker(async (key) => {
+    currentDataset = key;
+    showLoading(`Loading ${DATASETS[key].label}…`);
+
+    try {
+      // Release old data before loading new dataset to avoid holding
+      // both in memory simultaneously (matters for large datasets on
+      // constrained devices).
+      // @ts-expect-error — intentional null to release Arrow Table reference
+      table = null;
+      filterMask = null;
+      selectedClusterId = null;
+      focusedClusterId = null;
+
+      const t0 = performance.now();
+      table = await loadParquetTable(key);
+      console.log(
+        `Loaded ${table.numRows.toLocaleString()} rows in ${(performance.now() - t0).toFixed(0)}ms`,
+      );
+
+      activeCities = new Set(getUniqueCities(table));
+      updateCheckboxes(filterPanel, activeCities);
+      updateStats(table, table.numRows);
+
+      showLoading("Building clusters…");
+      setTimeout(() => {
+        deckInstance.setProps({
+          layers: [createBasemapLayer(), createClusterLayer(table)],
+        });
+        loadingPending = true;
+      }, 0);
+    } catch (err) {
+      hideLoading();
+      statsEl.innerHTML = `<span style="color: #ff6666">Error loading dataset: ${(err as Error).message}</span>`;
+    }
+  });
 
   // --- Create filter panel ---
 
