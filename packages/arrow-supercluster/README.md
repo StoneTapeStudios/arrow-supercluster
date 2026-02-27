@@ -1,5 +1,10 @@
 # arrow-supercluster
 
+[![npm version](https://img.shields.io/npm/v/arrow-supercluster)](https://www.npmjs.com/package/arrow-supercluster)
+[![npm downloads](https://img.shields.io/npm/dm/arrow-supercluster)](https://www.npmjs.com/package/arrow-supercluster)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/arrow-supercluster)](https://bundlephobia.com/package/arrow-supercluster)
+[![license](https://img.shields.io/npm/l/arrow-supercluster)](https://github.com/StoneTapeStudios/arrow-supercluster/blob/main/LICENSE)
+
 A spatial clustering engine for Apache Arrow tables. Reimplements the [Supercluster](https://github.com/mapbox/supercluster) algorithm to work directly with Arrow columnar memory — no GeoJSON serialization, no intermediate JS objects.
 
 ## Why
@@ -66,9 +71,13 @@ const output = engine.getClusters([-180, -85, 180, 85], 4);
 | `maxZoom`   | `number` | `16`    | Maximum zoom level for clustering        |
 | `minPoints` | `number` | `2`     | Minimum points to form a cluster         |
 
-### `engine.load(table, geometryColumn?, idColumn?)`
+### `engine.load(table, geometryColumn?, idColumn?, filterMask?)`
 
 Index an Arrow `Table`. The geometry column must be GeoArrow Point encoding (`FixedSizeList[2]` of `Float64`). Single-chunk tables use a zero-copy fast path.
+
+- `geometryColumn` — name of the geometry column (default: `"geometry"`)
+- `idColumn` — reserved for future use. Currently ignored; point IDs are always Arrow row indices. (default: `"id"`)
+- `filterMask` — optional `Uint8Array` of length `table.numRows`. When provided, only rows where `filterMask[i]` is non-zero are indexed. Rows with `0` are excluded from clustering entirely. Pass `null` or omit to include all rows.
 
 ### `engine.getClusters(bbox, zoom) → ClusterOutput`
 

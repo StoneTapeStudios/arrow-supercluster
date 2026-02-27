@@ -3,6 +3,21 @@
   "version": "0.2.0",
   "description": "Arrow-native spatial clustering engine — Supercluster reimplemented for Apache Arrow tables",
   "license": "ISC",
+  "keywords": [
+    "supercluster",
+    "clustering",
+    "geospatial",
+    "apache-arrow",
+    "geoarrow",
+    "geoparquet",
+    "spatial-index",
+    "point-clustering",
+    "typed-arrays",
+    "kdbush",
+    "map",
+    "visualization"
+  ],
+  "homepage": "https://github.com/StoneTapeStudios/arrow-supercluster#readme",
   "repository": {
     "type": "git",
     "url": "https://github.com/StoneTapeStudios/arrow-supercluster.git",

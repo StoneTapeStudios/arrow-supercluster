@@ -1,5 +1,10 @@
 # arrow-cluster-layer
 
+[![npm version](https://img.shields.io/npm/v/arrow-cluster-layer)](https://www.npmjs.com/package/arrow-cluster-layer)
+[![npm downloads](https://img.shields.io/npm/dm/arrow-cluster-layer)](https://www.npmjs.com/package/arrow-cluster-layer)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/arrow-cluster-layer)](https://bundlephobia.com/package/arrow-cluster-layer)
+[![license](https://img.shields.io/npm/l/arrow-cluster-layer)](https://github.com/StoneTapeStudios/arrow-supercluster/blob/main/LICENSE)
+
 A [deck.gl](https://deck.gl) `CompositeLayer` for rendering clustered point data from Apache Arrow tables. Built on top of [arrow-supercluster](https://www.npmjs.com/package/arrow-supercluster).
 
 ## Why
@@ -67,11 +72,11 @@ const layer = new ArrowClusterLayer({
 
 ### Data
 
-| Prop             | Type          | Default      | Description                                       |
-| ---------------- | ------------- | ------------ | ------------------------------------------------- |
-| `data`           | `arrow.Table` | required     | Arrow Table with a GeoArrow Point geometry column |
-| `geometryColumn` | `string`      | `"geometry"` | Name of the geometry column                       |
-| `idColumn`       | `string`      | `"id"`       | Name of the ID column                             |
+| Prop             | Type          | Default      | Description                                                             |
+| ---------------- | ------------- | ------------ | ----------------------------------------------------------------------- |
+| `data`           | `arrow.Table` | required     | Arrow Table with a GeoArrow Point geometry column                       |
+| `geometryColumn` | `string`      | `"geometry"` | Name of the geometry column                                             |
+| `idColumn`       | `string`      | `"id"`       | Reserved for future use (currently ignored — IDs are Arrow row indices) |
 
 ### Clustering
 
@@ -100,6 +105,12 @@ const layer = new ArrowClusterLayer({
 | `selectedClusterId` | `number \| null`   | `null`  | Currently selected cluster ID               |
 | `focusedClusterId`  | `number \| null`   | `null`  | Currently focused (hovered) cluster ID      |
 | `viewType`          | `"map" \| "globe"` | `"map"` | Flips text labels on globe view at low zoom |
+
+### Filtering
+
+| Prop         | Type                 | Default | Description                                                                                                                                                                    |
+| ------------ | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `filterMask` | `Uint8Array \| null` | `null`  | Boolean mask for filtering which points enter the cluster index. Length must equal `table.numRows`. `0` = excluded, non-zero = included. When `null`, all points are included. |
 
 ## Picking
 

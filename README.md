@@ -1,5 +1,7 @@
 # arrow-cluster-layer
 
+[![CI](https://github.com/StoneTapeStudios/arrow-supercluster/actions/workflows/ci.yml/badge.svg)](https://github.com/StoneTapeStudios/arrow-supercluster/actions/workflows/ci.yml)
+
 Monorepo for Arrow-native spatial clustering on the web.
 
 | Package                                               | Description                                                            |
@@ -64,9 +66,8 @@ The example uses [parquet-wasm](https://github.com/kylebarron/parquet-wasm) to l
 ├── packages/
 │   ├── arrow-supercluster/      # Clustering engine (no deck.gl dependency)
 │   └── arrow-cluster-layer/     # deck.gl layer (depends on arrow-supercluster)
-├── examples/
-│   └── basic/                   # Standalone demo app
-└── guidance-docs/               # Architecture and design docs
+└── examples/
+    └── basic/                   # Standalone demo app
 ```
 
 ## License
