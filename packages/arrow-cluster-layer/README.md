@@ -7,6 +7,8 @@
 
 A [deck.gl](https://deck.gl) `CompositeLayer` for rendering clustered point data from Apache Arrow tables. Built on top of [arrow-supercluster](https://www.npmjs.com/package/arrow-supercluster).
 
+**[Live Demo](https://arrow-cluster-layer-demo.jonathanstombaugh.workers.dev)** — cluster 200K / 1M / 2M points from GeoParquet in the browser.
+
 ## Why
 
 Replaces the typical GeoJSON → Supercluster → GeoJsonLayer pipeline with Arrow Table → ArrowClusterEngine → binary ScatterplotLayer. No intermediate JS objects, no GeoJSON serialization. Typed arrays go straight to the GPU.

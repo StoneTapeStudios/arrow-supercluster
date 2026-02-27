@@ -7,7 +7,9 @@
     "build": "npx tsx scripts/generate-geoparquet.ts && vite build",
     "build:vite": "vite build",
     "generate-data": "npx tsx scripts/generate-geoparquet.ts",
+    "upload:r2": "npx wrangler r2 object put arrow-cluster-demo-data/points-2m.parquet --file dist/data/points-2m.parquet --content-type application/vnd.apache.parquet --remote",
     "deploy": "npx wrangler deploy",
+    "deploy:full": "pnpm run build && pnpm run upload:r2 && pnpm run deploy",
     "preview": "npx wrangler dev"
   },
   "dependencies": {
@@ -19,6 +21,7 @@
     "parquet-wasm": "^0.7.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260305.0",
     "tsx": "^4.0.0",
     "vite": "^6.0.0",
     "vite-plugin-wasm": "^3.4.1",

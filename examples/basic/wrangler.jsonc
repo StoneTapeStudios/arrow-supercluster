@@ -1,8 +1,16 @@
 {
   "name": "arrow-cluster-layer-demo",
   "compatibility_date": "2026-02-27",
+  "main": "./worker/index.ts",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
   },
+  "r2_buckets": [
+    {
+      "bucket_name": "arrow-cluster-demo-data",
+      "binding": "arrow_cluster_demo_data",
+    },
+  ],
 }

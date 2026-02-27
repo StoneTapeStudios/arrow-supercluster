@@ -7,6 +7,8 @@
 
 A spatial clustering engine for Apache Arrow tables. Reimplements the [Supercluster](https://github.com/mapbox/supercluster) algorithm to work directly with Arrow columnar memory — no GeoJSON serialization, no intermediate JS objects.
 
+**[Live Demo](https://arrow-cluster-layer-demo.jonathanstombaugh.workers.dev)** — see it in action with up to 2M points.
+
 ## Why
 
 Supercluster expects GeoJSON in and produces GeoJSON out. If your data is already in Arrow format (e.g. loaded from GeoParquet), that means:

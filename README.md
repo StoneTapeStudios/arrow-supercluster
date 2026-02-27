@@ -4,6 +4,8 @@
 
 Monorepo for Arrow-native spatial clustering on the web.
 
+**[Live Demo](https://arrow-cluster-layer-demo.jonathanstombaugh.workers.dev)** — cluster 200K / 1M / 2M points from GeoParquet in the browser.
+
 | Package                                               | Description                                                            |
 | ----------------------------------------------------- | ---------------------------------------------------------------------- |
 | [`arrow-supercluster`](packages/arrow-supercluster)   | Clustering engine — Supercluster reimplemented for Apache Arrow tables |
