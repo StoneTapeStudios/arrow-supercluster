@@ -1,6 +1,6 @@
 {
   "name": "arrow-cluster-layer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "deck.gl CompositeLayer for clustered point rendering from Apache Arrow tables",
   "license": "ISC",
   "keywords": [
