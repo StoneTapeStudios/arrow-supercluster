@@ -30,9 +30,13 @@ jobs:
       - run: pnpm test
 
       - name: Publish arrow-supercluster
-        run: npm publish --provenance --access public
         working-directory: packages/arrow-supercluster
+        run: |
+          pnpm pack --pack-destination .
+          npm publish *.tgz --provenance --access public
 
       - name: Publish arrow-cluster-layer
-        run: npm publish --provenance --access public
         working-directory: packages/arrow-cluster-layer
+        run: |
+          pnpm pack --pack-destination .
+          npm publish *.tgz --provenance --access public
