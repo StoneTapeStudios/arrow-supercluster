@@ -60,6 +60,7 @@ pnpm example            # starts vite dev server at localhost:5173
 - Make sure `pnpm test` passes
 - Make sure `pnpm build` succeeds
 - Describe what changed and why in the PR description
+- Run `pnpm changeset` from the repo root and commit the generated file with your PR. This is how versions and changelogs are tracked across the monorepo. If your change doesn't affect any published package (docs, tests, tooling), you can skip this step.
 
 ## Questions?
 

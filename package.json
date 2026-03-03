@@ -12,6 +12,7 @@
     "generate-data": "pnpm --filter arrow-cluster-layer-example generate-data"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.8",
     "typescript": "^5.8.3",
     "vitest": "^3.2.1"
   }
