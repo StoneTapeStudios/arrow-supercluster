@@ -30,3 +30,5 @@ yarn.lock
 supercluster-layer
 
 docs
+.rules
+.plans

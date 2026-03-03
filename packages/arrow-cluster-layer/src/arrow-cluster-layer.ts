@@ -36,6 +36,7 @@ const defaultProps: DefaultProps<ArrowClusterLayerProps> = {
   secondaryColor: { type: "color", value: DEFAULT_SECONDARY_COLOR },
   selectedColor: { type: "color", value: DEFAULT_SELECTED_COLOR },
   textOpacity: { type: "number", value: 255 },
+  textLuminanceThreshold: { type: "number", value: 0.5 },
   pointRadiusMinPixels: { type: "number", value: 10 },
   pointRadiusMaxPixels: { type: "number", value: 100 },
   selectedClusterId: null,
@@ -125,6 +126,7 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       secondaryColor,
       selectedColor,
       textOpacity,
+      textLuminanceThreshold,
       pointRadiusMinPixels,
       pointRadiusMaxPixels,
       selectedClusterId,
@@ -145,7 +147,11 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       selectedClusterId,
     );
     const radii = computeRadii(clusterOutput, totalPoints);
-    const textColors = computeTextColors(fillColors, textOpacity!);
+    const textColors = computeTextColors(
+      fillColors,
+      textOpacity!,
+      textLuminanceThreshold!,
+    );
     const texts = computeTexts(clusterOutput);
 
     // Snapshot positions for TextLayer accessors (subarray may be reused)

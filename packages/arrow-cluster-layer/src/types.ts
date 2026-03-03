@@ -31,6 +31,8 @@ export interface ArrowClusterLayerProps extends CompositeLayerProps {
   secondaryColor?: ColorRGBA;
   selectedColor?: ColorRGBA;
   textOpacity?: number;
+  /** Luminance threshold (0–1) above which text is black, below which text is white. Defaults to 0.5. */
+  textLuminanceThreshold?: number;
   pointRadiusMinPixels?: number;
   pointRadiusMaxPixels?: number;
 

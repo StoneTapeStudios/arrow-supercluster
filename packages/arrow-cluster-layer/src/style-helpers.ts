@@ -84,6 +84,7 @@ function linearize(channel: number): number {
 export function computeTextColors(
   fillColors: Uint8Array,
   textOpacity: number,
+  textLuminanceThreshold = 0.5,
 ): Uint8Array {
   const length = fillColors.length / 4;
   const textColors = new Uint8Array(length * 4);
@@ -97,7 +98,7 @@ export function computeTextColors(
     const luminance =
       0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
 
-    const textValue = luminance > 0.179 ? 0 : 255;
+    const textValue = luminance > textLuminanceThreshold ? 0 : 255;
     textColors[offset] = textValue;
     textColors[offset + 1] = textValue;
     textColors[offset + 2] = textValue;
