@@ -29,14 +29,8 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
-      - name: Publish arrow-supercluster
-        working-directory: packages/arrow-supercluster
-        run: |
-          pnpm pack --pack-destination .
-          npm publish *.tgz --provenance --access public
-
-      - name: Publish arrow-cluster-layer
-        working-directory: packages/arrow-cluster-layer
-        run: |
-          pnpm pack --pack-destination .
-          npm publish *.tgz --provenance --access public
+      - name: Publish changed packages
+        run: pnpm changeset publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
