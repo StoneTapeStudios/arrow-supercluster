@@ -6,10 +6,10 @@
     "test": "vitest run",
     "bench": "pnpm --filter arrow-supercluster bench",
     "bench:pipeline": "pnpm --filter arrow-supercluster bench:pipeline",
-    "lint": "pnpm -r lint",
     "clean": "pnpm -r clean",
     "example": "pnpm --filter arrow-cluster-layer-example dev",
-    "generate-data": "pnpm --filter arrow-cluster-layer-example generate-data"
+    "generate-data": "pnpm --filter arrow-cluster-layer-example generate-data",
+    "release": "pnpm changeset version && git add . && git commit -m 'chore: version packages' && git push origin main && gh workflow run publish.yml"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
