@@ -311,8 +311,25 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       return;
     }
 
-    // Get all leaf indices for the focused cluster
-    const leafIndices = engine.getLeaves(focusedClusterId);
-    this.setState({ focusedChildrenIds: new Set(leafIndices) });
+    // Iteratively collect all descendant IDs (both sub-clusters and leaf points)
+    // using getChildren() so that child sub-clusters are included in the set.
+    const allDescendantIds = new Set<number>();
+    const stack = [focusedClusterId];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      const children = engine.getChildren(currentId);
+
+      for (let i = 0; i < children.length; i++) {
+        const childId = children.ids[i];
+        allDescendantIds.add(childId);
+
+        if (children.isCluster[i] === 1) {
+          stack.push(childId);
+        }
+      }
+    }
+
+    this.setState({ focusedChildrenIds: allDescendantIds });
   }
 }
