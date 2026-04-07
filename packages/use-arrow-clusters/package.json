@@ -19,7 +19,8 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "arrow-supercluster": "workspace:*"

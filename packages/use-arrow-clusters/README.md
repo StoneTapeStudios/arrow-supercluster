@@ -2,7 +2,7 @@
 
 A React hook for rendering clustered point data from Apache Arrow tables, built on top of `arrow-supercluster`.
 
-This package provides a framework-agnostic React wrapper that efficiently manages the instantiation of the clustering engine and the computation of clusters based on the map's viewport.
+This package provides a React wrapper that efficiently manages the instantiation of the clustering engine and the computation of clusters based on the map's viewport.
 
 ## Install
 
@@ -46,3 +46,5 @@ function MapComponent({ table }: { table: Table }) {
 The hook utilizes dual `useMemo` blocks to separate expensive operations (loading the Arrow table) from cheap operations (querying clusters based on viewport).
 
 Dependencies like `options` and `bounds` are destructured internally to prevent unnecessary re-renders due to React's reference equality checks. You do not need to memoize the `options` object or `bounds` array before passing them to the hook.
+
+** Important note on `filterMask`:** Unlike `options` and `bounds`, if you provide a `filterMask` (which is a `Uint8Array`), you **must** stabilize its reference (e.g., using `useMemo` or `useRef`). Passing a newly instantiated `Uint8Array` on every render will cause the clustering engine to unnecessarily re-load, as React uses strict referential equality (`Object.is`) for array dependencies.
