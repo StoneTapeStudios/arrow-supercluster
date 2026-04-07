@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
-import { ArrowClusterEngine } from 'arrow-supercluster';
-import type { ArrowClusterEngineOptions, ClusterOutput } from 'arrow-supercluster';
+import { useMemo, useRef } from 'react';
+import { ArrowClusterEngine, type ArrowClusterEngineOptions, type ClusterOutput } from 'arrow-supercluster';
 import type { Table } from 'apache-arrow';
 
 export interface UseArrowClustersOptions {
@@ -18,8 +17,17 @@ export interface UseArrowClustersResult {
   supercluster: ArrowClusterEngine | null;
 }
 
+// Helper function to check if dependency arrays are shallowly equal
+function depsShallowEqual(a: unknown[], b: unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!Object.is(a[i], b[i])) return false;
+  }
+  return true;
+}
+
 /**
- * React hook for clustering Arrow tables using arrow-supercluster.
+ * A React hook for clustering Apache Arrow tables using arrow-supercluster.
  */
 export function useArrowClusters({
   table,
@@ -31,28 +39,45 @@ export function useArrowClusters({
   zoom,
 }: UseArrowClustersOptions): UseArrowClustersResult {
   
+  // Ref to securely hold the engine instance and its initialization dependencies.
+  // This prevents React from inadvertently garbage-collecting our expensive engine instance.
+  const engineRef = useRef<{ engine: ArrowClusterEngine; deps: unknown[] } | null>(null);
+
   // 1. Expensive operation: Initialize engine and load data
+  // We use a manual memoization pattern with useRef to ensure the engine is not re-created
+  // unexpectedly due to React's aggressive cache clearing of useMemo.
   const supercluster = useMemo(() => {
     if (!table) return null;
 
+    // Destructure options to prevent unnecessary re-runs due to React's strict reference equality checks
+    const deps = [
+      table, 
+      geometryColumn, 
+      idColumn, 
+      filterMask,
+      options?.radius, 
+      options?.extent, 
+      options?.minZoom, 
+      options?.maxZoom, 
+      options?.minPoints
+    ];
+
+    // Return the cached engine if dependencies haven't changed
+    if (engineRef.current && depsShallowEqual(engineRef.current.deps, deps)) {
+      return engineRef.current.engine;
+    }
+
+    // Initialize a new engine if dependencies changed or it's the first run
     const engine = new ArrowClusterEngine(options);
     
     // Pass undefined if idColumn or filterMask are not provided to fallback to engine defaults
     engine.load(table, geometryColumn, idColumn ?? undefined, filterMask ?? undefined);
     
+    // Cache the newly created engine and its dependencies
+    engineRef.current = { engine, deps };
+    
     return engine;
-  }, [
-    table, 
-    geometryColumn, 
-    idColumn, 
-    filterMask, 
-    // Destructure options object to prevent unnecessary re-runs due to reference equality checks
-    options?.radius, 
-    options?.extent, 
-    options?.minZoom, 
-    options?.maxZoom, 
-    options?.minPoints
-  ]); 
+  }, [table, geometryColumn, idColumn, filterMask, options]); 
 
   // 2. Cheap operation: Calculate clusters for the current viewport bounds
   const clusters = useMemo(() => {
@@ -60,10 +85,9 @@ export function useArrowClusters({
       return null;
     }
     
-    return supercluster.getClusters(bounds, Math.floor(zoom));
+   return supercluster.getClusters(bounds, Math.floor(zoom));
   }, [
     supercluster, 
-    // Spread bounds tuple to prevent unnecessary re-runs due to reference equality checks
     bounds?.[0], 
     bounds?.[1], 
     bounds?.[2], 
