@@ -33,9 +33,10 @@ export function getScalarNumberBuffer(
     for (let j = 0; j < len; j++) {
       const srcIdx = offset + j;
 
-      // Check null bitmap
+      // Check null bitmap — Arrow uses a validity bitmap where bit=1 means valid.
+      // An empty or absent nullBitmap means all values are valid (non-null).
       let isNull = false;
-      if (nullBitmap) {
+      if (nullBitmap && nullBitmap.length > 0) {
         const byteIdx = srcIdx >> 3;
         const bitIdx = srcIdx & 7;
         isNull = (nullBitmap[byteIdx] & (1 << bitIdx)) === 0;

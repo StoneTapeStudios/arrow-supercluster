@@ -31,14 +31,23 @@ export class ArrowClusterEngine {
   private rangeValues: Float64Array | null = null;
   private excludedSentinel = Number.POSITIVE_INFINITY;
 
-  // Global domain over non-sentinel values (used by histogram binning in Step 2)
+  // Global domain over non-sentinel values, and histogram bin width.
   private rangeMin = 0;
   private rangeMax = 0;
+  private binWidth = 0;
 
   // Per level z, indexed by node position (i / STRIDE):
   private nodeMinVal: Float64Array[] = [];
   private nodeMaxVal: Float64Array[] = [];
   private nodeRangedCount: Uint32Array[] = [];
+
+  // Cumulative histograms for large clusters only.
+  // histOffset[z][pos] = element offset into histData, or -1 if no histogram.
+  private histOffset: Int32Array[] = [];
+  // Packed prefix-sum arrays: each is (B+1) entries addressed via histOffset.
+  private histData: Uint32Array = new Uint32Array(0);
+  // Temporary list used during build, packed into histData at the end of load().
+  private _histDataList: number[] = [];
 
   // Reusable output buffers — allocated once during load(), reused per query
   private _bufPositions: Float64Array = new Float64Array(0);
@@ -99,9 +108,13 @@ export class ArrowClusterEngine {
     this.rangeValues = null;
     this.rangeMin = 0;
     this.rangeMax = 0;
+    this.binWidth = 0;
     this.nodeMinVal = [];
     this.nodeMaxVal = [];
     this.nodeRangedCount = [];
+    this.histOffset = [];
+    this.histData = new Uint32Array(0);
+    this._histDataList = [];
 
     if (rangeColumn) {
       const rangeCol = table.getChild(rangeColumn);
@@ -129,6 +142,12 @@ export class ArrowClusterEngine {
       }
       this.rangeMin = min === Number.POSITIVE_INFINITY ? 0 : min;
       this.rangeMax = max === Number.NEGATIVE_INFINITY ? 0 : max;
+
+      // Compute bin width for histograms
+      const B = this.histogramBins;
+      if (B > 0 && this.rangeMax > this.rangeMin) {
+        this.binWidth = (this.rangeMax - this.rangeMin) / B;
+      }
     }
 
     // Build the initial flat data array from Arrow coordinates
@@ -182,6 +201,9 @@ export class ArrowClusterEngine {
       this.nodeMinVal[this.maxZoom + 1] = minArr;
       this.nodeMaxVal[this.maxZoom + 1] = maxArr;
       this.nodeRangedCount[this.maxZoom + 1] = countArr;
+
+      // Leaf level: individual points never get histograms (numPoints === 1)
+      this.histOffset[this.maxZoom + 1] = new Int32Array(numNodes).fill(-1);
     }
 
     for (let z = this.maxZoom; z >= this.minZoom; z--) {
@@ -194,6 +216,12 @@ export class ArrowClusterEngine {
       if (this.rangeValues) {
         this._buildRangeAggregates(z, nextData);
       }
+    }
+
+    // Pack histogram data into a single typed array for cache-friendly access.
+    if (this._histDataList.length > 0) {
+      this.histData = new Uint32Array(this._histDataList);
+      this._histDataList = []; // release temporary
     }
 
     // Pre-allocate reusable output buffers sized to the max possible result count.
@@ -402,7 +430,7 @@ export class ArrowClusterEngine {
   /**
    * Get the filtered count for a node at level z, given a filterRange.
    * Uses the tiered approach: direct check for singletons, min/max fast paths
-   * for clusters, and leaf-walk for partial overlap.
+   * for clusters, histogram for large partial clusters, and leaf-walk for small ones.
    */
   private _getFilteredCount(
     z: number,
@@ -437,8 +465,40 @@ export class ArrowClusterEngine {
       return rangedCount;
     }
 
-    // Partial overlap — leaf-walk to count
+    // Partial overlap — try histogram first, fall back to leaf-walk
+    const off = this.histOffset[z]?.[nodePos] ?? -1;
+    if (off >= 0) {
+      return this._histogramCount(off, filterRange);
+    }
+
     return this._countLeavesInRange(data[k + OFFSET_ID], filterRange);
+  }
+
+  /**
+   * Use the prefix-sum histogram at the given offset to compute a range count.
+   * Deterministic snapping: always include the boundary bins.
+   */
+  private _histogramCount(off: number, filterRange: [number, number]): number {
+    const B = this.histogramBins;
+    // loBin: first bin that could contain filterRange[0]
+    const loBin = this._binOf(filterRange[0]);
+    // hiBin: last bin that could contain filterRange[1]
+    const hiBin = this._binOf(filterRange[1]);
+    // prefix[k] = count of leaves in bins 0..k-1
+    // count in bins [loBin, hiBin] = prefix[hiBin+1] - prefix[loBin]
+    return this.histData[off + hiBin + 1] - this.histData[off + loBin];
+  }
+
+  /**
+   * Map a value to its bin index. Clamped to [0, B-1].
+   */
+  private _binOf(value: number): number {
+    const B = this.histogramBins;
+    if (this.binWidth === 0) return 0;
+    const bin = Math.floor((value - this.rangeMin) / this.binWidth);
+    if (bin < 0) return 0;
+    if (bin >= B) return B - 1;
+    return bin;
   }
 
   /**
@@ -449,21 +509,20 @@ export class ArrowClusterEngine {
     clusterId: number,
     filterRange: [number, number],
   ): number {
+    const originZoom = this._getOriginZoom(clusterId);
     const { indices, data } = this._getChildIndices(clusterId);
     let count = 0;
 
     for (let i = 0; i < indices.length; i++) {
-      const k = indices[i] * STRIDE;
+      const nid = indices[i];
+      const k = nid * STRIDE;
       const numPts = data[k + OFFSET_NUM];
 
       if (numPts > 1) {
-        // Sub-cluster — check if we can short-circuit with its aggregates
-        const childClusterId = data[k + OFFSET_ID];
-        const childZoom = this._getOriginZoom(childClusterId);
-        const childPos = this._getOriginId(childClusterId);
-        const childMin = this.nodeMinVal[childZoom]?.[childPos];
-        const childMax = this.nodeMaxVal[childZoom]?.[childPos];
-        const childRangedCount = this.nodeRangedCount[childZoom]?.[childPos];
+        // Sub-cluster — use its aggregates stored at this level and position
+        const childMin = this.nodeMinVal[originZoom]?.[nid];
+        const childMax = this.nodeMaxVal[originZoom]?.[nid];
+        const childRangedCount = this.nodeRangedCount[originZoom]?.[nid];
 
         if (
           childRangedCount === 0 ||
@@ -479,8 +538,8 @@ export class ArrowClusterEngine {
           // Fully inside
           count += childRangedCount;
         } else {
-          // Partial — recurse
-          count += this._countLeavesInRange(childClusterId, filterRange);
+          // Partial — recurse into the sub-cluster
+          count += this._countLeavesInRange(data[k + OFFSET_ID], filterRange);
         }
       } else {
         // Leaf point
@@ -500,14 +559,20 @@ export class ArrowClusterEngine {
   }
 
   /**
-   * Build per-node range aggregates for a given level after clustering.
-   * Each node gets min, max, and rangedCount based on its children's values.
+   * Build per-node range aggregates and histograms for a given level after clustering.
+   * Each node gets min, max, and rangedCount. Large clusters (>= threshold) also
+   * get a prefix-sum histogram stored in histData.
    */
   private _buildRangeAggregates(z: number, levelData: number[]): void {
     const numNodes = (levelData.length / STRIDE) | 0;
     const minArr = new Float64Array(numNodes).fill(Number.POSITIVE_INFINITY);
     const maxArr = new Float64Array(numNodes).fill(Number.NEGATIVE_INFINITY);
     const countArr = new Uint32Array(numNodes);
+    const offsets = new Int32Array(numNodes).fill(-1);
+
+    const B = this.histogramBins;
+    const T = this.histogramThreshold;
+    const useHistograms = B > 0 && this.binWidth > 0;
 
     for (let pos = 0; pos < numNodes; pos++) {
       const k = pos * STRIDE;
@@ -523,20 +588,46 @@ export class ArrowClusterEngine {
           countArr[pos] = 1;
         }
       } else {
-        // Cluster — we need to aggregate from children.
-        // Use _getChildIndices to find children and fold their aggregates.
+        // Cluster — aggregate from children
         const clusterId = levelData[k + OFFSET_ID];
-        this._foldChildAggregates(clusterId, pos, minArr, maxArr, countArr);
+        const needsHist = useHistograms && numPts >= T;
+        const rawBins = needsHist ? new Uint32Array(B) : null;
+
+        this._foldChildAggregates(
+          clusterId,
+          pos,
+          minArr,
+          maxArr,
+          countArr,
+          rawBins,
+        );
+
+        // Build prefix-sum histogram for large clusters
+        if (rawBins && countArr[pos] > 0) {
+          // Convert raw bin counts to prefix-sum: prefix[0] = 0, prefix[k] = sum(bins[0..k-1])
+          const prefix = new Uint32Array(B + 1);
+          for (let b = 0; b < B; b++) {
+            prefix[b + 1] = prefix[b] + rawBins[b];
+          }
+          // Store offset and append to histData
+          offsets[pos] = this._histDataList.length;
+          // Push all B+1 values
+          for (let b = 0; b <= B; b++) {
+            this._histDataList.push(prefix[b]);
+          }
+        }
       }
     }
 
     this.nodeMinVal[z] = minArr;
     this.nodeMaxVal[z] = maxArr;
     this.nodeRangedCount[z] = countArr;
+    this.histOffset[z] = offsets;
   }
 
   /**
    * Fold child node aggregates into the parent cluster at `parentPos`.
+   * Optionally accumulates raw bin counts into `rawBins` for histogram building.
    */
   private _foldChildAggregates(
     clusterId: number,
@@ -544,6 +635,7 @@ export class ArrowClusterEngine {
     minArr: Float64Array,
     maxArr: Float64Array,
     countArr: Uint32Array,
+    rawBins: Uint32Array | null,
   ): void {
     const originZoom = this._getOriginZoom(clusterId);
     const childLevelData = this.treeData[originZoom];
@@ -561,6 +653,9 @@ export class ArrowClusterEngine {
     const childMinArr = this.nodeMinVal[originZoom];
     const childMaxArr = this.nodeMaxVal[originZoom];
     const childCountArr = this.nodeRangedCount[originZoom];
+    const childHistOffset = this.histOffset[originZoom];
+
+    const B = this.histogramBins;
 
     for (const nid of neighborIds) {
       const nk = nid * STRIDE;
@@ -575,6 +670,77 @@ export class ArrowClusterEngine {
           if (cMin < minArr[parentPos]) minArr[parentPos] = cMin;
           if (cMax > maxArr[parentPos]) maxArr[parentPos] = cMax;
           countArr[parentPos] += cCount;
+
+          // Accumulate histogram bins from child
+          if (rawBins) {
+            const childOff = childHistOffset?.[nid] ?? -1;
+            if (childOff >= 0) {
+              // Child has a histogram — add its raw counts (diff of prefix)
+              for (let b = 0; b < B; b++) {
+                rawBins[b] +=
+                  this._histDataList[childOff + b + 1] -
+                  this._histDataList[childOff + b];
+              }
+            } else {
+              // Child is a small cluster or individual point — count its leaves into bins
+              this._accumulateLeafBins(
+                childLevelData,
+                nid,
+                originZoom,
+                rawBins,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * For a node without a histogram, accumulate its leaf values into rawBins.
+   * If it's an individual point, add its single value. If it's a small cluster,
+   * walk its leaves.
+   */
+  private _accumulateLeafBins(
+    levelData: number[],
+    nodePos: number,
+    _z: number,
+    rawBins: Uint32Array,
+  ): void {
+    const k = nodePos * STRIDE;
+    const numPts = levelData[k + OFFSET_NUM];
+
+    if (numPts === 1) {
+      // Individual point
+      const srcIdx = levelData[k + OFFSET_ID];
+      const v = this.rangeValues![srcIdx];
+      if (v !== this.excludedSentinel) {
+        rawBins[this._binOf(v)]++;
+      }
+    } else {
+      // Small cluster without histogram — walk its leaves
+      const clusterId = levelData[k + OFFSET_ID];
+      this._walkLeavesIntoBins(clusterId, rawBins);
+    }
+  }
+
+  /**
+   * Recursively walk all leaves of a cluster and increment rawBins for each.
+   */
+  private _walkLeavesIntoBins(clusterId: number, rawBins: Uint32Array): void {
+    const { indices, data } = this._getChildIndices(clusterId);
+
+    for (let i = 0; i < indices.length; i++) {
+      const k = indices[i] * STRIDE;
+      const numPts = data[k + OFFSET_NUM];
+
+      if (numPts > 1) {
+        this._walkLeavesIntoBins(data[k + OFFSET_ID], rawBins);
+      } else {
+        const srcIdx = data[k + OFFSET_ID];
+        const v = this.rangeValues![srcIdx];
+        if (v !== this.excludedSentinel) {
+          rawBins[this._binOf(v)]++;
         }
       }
     }
