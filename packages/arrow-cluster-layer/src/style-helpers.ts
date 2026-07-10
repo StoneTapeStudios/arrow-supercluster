@@ -49,6 +49,7 @@ export function computeFillColors(
 /**
  * Compute radii for each cluster/point using log-scaled formula.
  * Matches the existing EventsClusterLayer radius calculation.
+ * Uses filteredPointCounts for sizing when a range filter is active.
  */
 export function computeRadii(
   output: ClusterOutput,
@@ -56,13 +57,13 @@ export function computeRadii(
 ): Float32Array {
   const BASE_SIZE = 4;
   const SCALE_FACTOR = 50;
-  const { length, pointCounts } = output;
+  const { length, filteredPointCounts } = output;
   const radii = new Float32Array(length);
 
   const logTotal = Math.log(totalPoints + 1);
 
   for (let i = 0; i < length; i++) {
-    const count = pointCounts[i];
+    const count = filteredPointCounts[i];
     radii[i] = BASE_SIZE + (Math.log(count + 1) / logTotal) * SCALE_FACTOR;
   }
 
@@ -110,13 +111,14 @@ export function computeTextColors(
 
 /**
  * Compute text labels for clusters. Individual points get null.
+ * Uses filteredPointCounts so labels reflect the active range filter.
  */
 export function computeTexts(output: ClusterOutput): (string | null)[] {
-  const { length, pointCounts, isCluster } = output;
+  const { length, filteredPointCounts, isCluster } = output;
   const texts: (string | null)[] = new Array(length);
 
   for (let i = 0; i < length; i++) {
-    texts[i] = isCluster[i] ? String(pointCounts[i]) : null;
+    texts[i] = isCluster[i] ? String(filteredPointCounts[i]) : null;
   }
 
   return texts;

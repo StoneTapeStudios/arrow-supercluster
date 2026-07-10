@@ -15,16 +15,25 @@ function makeOutput(
   const length = items.length;
   const positions = new Float64Array(length * 2); // not used by style helpers
   const pointCounts = new Uint32Array(length);
+  const filteredPointCounts = new Uint32Array(length);
   const ids = new Float64Array(length);
   const isCluster = new Uint8Array(length);
 
   for (let i = 0; i < length; i++) {
     pointCounts[i] = items[i].pointCount;
+    filteredPointCounts[i] = items[i].pointCount;
     ids[i] = items[i].id;
     isCluster[i] = items[i].isCluster ? 1 : 0;
   }
 
-  return { positions, pointCounts, ids, isCluster, length };
+  return {
+    positions,
+    pointCounts,
+    filteredPointCounts,
+    ids,
+    isCluster,
+    length,
+  };
 }
 
 const PRIMARY: ColorRGBA = [26, 26, 64, 200];

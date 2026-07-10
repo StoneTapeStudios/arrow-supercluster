@@ -26,6 +26,12 @@ export interface ArrowClusterLayerProps extends CompositeLayerProps {
   clusterMinZoom?: number;
   clusterMinPoints?: number;
 
+  // Range filtering
+  /** Name of a scalar numeric column to use for range filtering. Changing this triggers a rebuild. */
+  rangeColumn?: string | null;
+  /** Inclusive [min, max] numeric range filter. Changing this triggers a re-query (no rebuild). */
+  filterRange?: [number, number] | null;
+
   // Styling
   primaryColor?: ColorRGBA;
   secondaryColor?: ColorRGBA;
@@ -55,7 +61,8 @@ export interface ArrowClusterPickingInfo extends PickingInfo {
   isCluster: boolean;
   /** The cluster ID (encoded) if cluster, or Arrow row index if point. */
   clusterId: number;
-  /** Number of points in the cluster (1 for individual points). */
+  /** Number of points in the cluster (1 for individual points).
+   *  When a filterRange is active, this reflects the filtered count. */
   pointCount: number;
   /** Arrow row indices of all leaf points in the cluster. */
   arrowIndices: number[];

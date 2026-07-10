@@ -25,6 +25,16 @@ const DEFAULT_PRIMARY_COLOR: ColorRGBA = [26, 26, 64, 200];
 const DEFAULT_SECONDARY_COLOR: ColorRGBA = [100, 100, 200, 200];
 const DEFAULT_SELECTED_COLOR: ColorRGBA = [255, 140, 0, 230];
 
+/** Value-compare two filterRange tuples (avoids re-query on identical-value new arrays). */
+function rangeEquals(
+  a: [number, number] | null | undefined,
+  b: [number, number] | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  return a[0] === b[0] && a[1] === b[1];
+}
+
 const defaultProps: DefaultProps<ArrowClusterLayerProps> = {
   geometryColumn: "geometry",
   idColumn: "id",
@@ -32,6 +42,8 @@ const defaultProps: DefaultProps<ArrowClusterLayerProps> = {
   clusterMaxZoom: { type: "number", value: 20 },
   clusterMinZoom: { type: "number", value: 2 },
   clusterMinPoints: { type: "number", value: 2 },
+  rangeColumn: null,
+  filterRange: null,
   primaryColor: { type: "color", value: DEFAULT_PRIMARY_COLOR },
   secondaryColor: { type: "color", value: DEFAULT_SECONDARY_COLOR },
   selectedColor: { type: "color", value: DEFAULT_SELECTED_COLOR },
@@ -93,22 +105,27 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
     // when the underlying Arrow Table hasn't actually been replaced.
     const dataActuallyChanged =
       changeFlags.dataChanged && props.data !== oldProps.data;
-    if (
+
+    const needsRebuild =
       dataActuallyChanged ||
       props.filterMask !== oldProps.filterMask ||
       props.clusterRadius !== oldProps.clusterRadius ||
       props.clusterMaxZoom !== oldProps.clusterMaxZoom ||
       props.clusterMinZoom !== oldProps.clusterMinZoom ||
-      props.clusterMinPoints !== oldProps.clusterMinPoints
-    ) {
+      props.clusterMinPoints !== oldProps.clusterMinPoints ||
+      props.rangeColumn !== oldProps.rangeColumn;
+
+    if (needsRebuild) {
       this._rebuildEngine(props);
       engineChanged = true;
     }
 
-    // Only re-query clusters when the integer zoom actually changes
+    // Re-query clusters when zoom changes or filterRange changes (value compare)
     const zoom = Math.floor(this.context.viewport.zoom ?? 0);
-    if (engineChanged || zoom !== this.state.lastQueriedZoom) {
-      this._queryClusters(zoom);
+    const rangeChanged = !rangeEquals(props.filterRange, oldProps.filterRange);
+
+    if (engineChanged || zoom !== this.state.lastQueriedZoom || rangeChanged) {
+      this._queryClusters(zoom, props.filterRange);
     }
 
     // Update focused children set when focusedClusterId changes
@@ -253,7 +270,13 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
   getPickingInfo(params: GetPickingInfoParams): ArrowClusterPickingInfo {
     const { clusterOutput, engine } = this.state;
     const table = this.props.data as Table;
-    return resolvePickingInfo(params.info, clusterOutput, engine, table);
+    return resolvePickingInfo(
+      params.info,
+      clusterOutput,
+      engine,
+      table,
+      this.props.filterRange,
+    );
   }
 
   /**
@@ -287,18 +310,26 @@ export class ArrowClusterLayer extends CompositeLayer<ArrowClusterLayerProps> {
       props.geometryColumn ?? "geometry",
       props.idColumn ?? "id",
       props.filterMask ?? null,
+      props.rangeColumn ?? null,
     );
     this.setState({ engine });
   }
 
-  private _queryClusters(zoom: number): void {
+  private _queryClusters(
+    zoom: number,
+    filterRange?: [number, number] | null,
+  ): void {
     const { engine } = this.state;
     if (!engine) {
       this.setState({ clusterOutput: null, lastQueriedZoom: zoom });
       return;
     }
 
-    const clusterOutput = engine.getClusters([-180, -85, 180, 85], zoom);
+    const clusterOutput = engine.getClusters(
+      [-180, -85, 180, 85],
+      zoom,
+      filterRange,
+    );
     this.setState({ clusterOutput, lastQueriedZoom: zoom });
   }
 

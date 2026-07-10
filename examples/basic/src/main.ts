@@ -78,6 +78,12 @@ let focusedClusterId: number | null = null;
 let currentZoom = 2;
 let activeCities: Set<string> = new Set();
 let filterMask: Uint8Array | null = null;
+let filterRange: [number, number] | null = null;
+
+// Time domain constants (match generate-geoparquet.ts)
+const YEAR_START = 1704067200; // 2024-01-01T00:00:00Z
+const YEAR_SECONDS = 365 * 24 * 60 * 60;
+const YEAR_END = YEAR_START + YEAR_SECONDS;
 
 const statsEl = document.getElementById("stats")!;
 const hoverEl = document.getElementById("hover-info")!;
@@ -209,6 +215,76 @@ function updateCheckboxes(panel: HTMLElement, activeCities: Set<string>) {
   }
 }
 
+// --- Time range slider ---
+
+function formatDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function createTimeRangePanel(
+  onRangeChange: (range: [number, number] | null) => void,
+): HTMLElement {
+  const panel = document.createElement("div");
+  panel.id = "time-range-panel";
+
+  panel.innerHTML = `
+    <h3>Time Range Filter</h3>
+    <div class="time-range-hint">Drag handles to filter clusters by timestamp — no rebuild, just re-query.</div>
+    <div class="time-range-labels">
+      <span id="range-start-label">${formatDate(YEAR_START)}</span>
+      <span id="range-end-label">${formatDate(YEAR_END)}</span>
+    </div>
+    <div class="time-range-sliders">
+      <input type="range" id="range-start" min="${YEAR_START}" max="${YEAR_END}" value="${YEAR_START}" step="86400">
+      <input type="range" id="range-end" min="${YEAR_START}" max="${YEAR_END}" value="${YEAR_END}" step="86400">
+    </div>
+    <div class="time-range-controls">
+      <button id="range-reset">Reset (show all)</button>
+      <label class="time-range-toggle"><input type="checkbox" id="range-enabled" checked> Enabled</label>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  const startInput = panel.querySelector<HTMLInputElement>("#range-start")!;
+  const endInput = panel.querySelector<HTMLInputElement>("#range-end")!;
+  const startLabel = panel.querySelector("#range-start-label")!;
+  const endLabel = panel.querySelector("#range-end-label")!;
+  const resetBtn = panel.querySelector<HTMLButtonElement>("#range-reset")!;
+  const enabledCb = panel.querySelector<HTMLInputElement>("#range-enabled")!;
+
+  function emitRange() {
+    if (!enabledCb.checked) {
+      onRangeChange(null);
+      return;
+    }
+    const lo = Number(startInput.value);
+    const hi = Number(endInput.value);
+    // Ensure lo <= hi
+    const range: [number, number] = [Math.min(lo, hi), Math.max(lo, hi)];
+    startLabel.textContent = formatDate(range[0]);
+    endLabel.textContent = formatDate(range[1]);
+    onRangeChange(range);
+  }
+
+  startInput.addEventListener("input", emitRange);
+  endInput.addEventListener("input", emitRange);
+  enabledCb.addEventListener("change", emitRange);
+
+  resetBtn.addEventListener("click", () => {
+    startInput.value = String(YEAR_START);
+    endInput.value = String(YEAR_END);
+    startLabel.textContent = formatDate(YEAR_START);
+    endLabel.textContent = formatDate(YEAR_END);
+    onRangeChange(null);
+  });
+
+  return panel;
+}
+
 // --- Basemap layer ---
 
 function createBasemapLayer() {
@@ -253,6 +329,8 @@ function createClusterLayer(table: Table) {
     selectedClusterId,
     focusedClusterId,
     filterMask,
+    rangeColumn: "timestamp",
+    filterRange,
     pickable: true,
   });
   clusterLayerRef = layer;
@@ -455,6 +533,16 @@ async function main() {
       applyFilter();
     },
   );
+
+  // --- Create time range panel ---
+
+  createTimeRangePanel((range) => {
+    filterRange = range;
+    // Range change triggers a re-query only (no rebuild) — fast enough to drive inline
+    deckInstance.setProps({
+      layers: [createBasemapLayer(), createClusterLayer(table)],
+    });
+  });
 }
 
 main().catch((err) => {

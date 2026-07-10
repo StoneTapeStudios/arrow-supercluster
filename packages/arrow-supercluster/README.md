@@ -54,36 +54,43 @@ engine.load(table, "geometry");
 // Query clusters for a bounding box and zoom level
 const output = engine.getClusters([-180, -85, 180, 85], 4);
 
-// output.positions   — Float64Array [lng0, lat0, lng1, lat1, ...]
-// output.pointCounts — Uint32Array  [count0, count1, ...]
-// output.ids         — Float64Array [id0, id1, ...]
-// output.isCluster   — Uint8Array   [1, 0, 1, ...] (1 = cluster, 0 = point)
-// output.length      — number
+// output.positions            — Float64Array [lng0, lat0, lng1, lat1, ...]
+// output.pointCounts          — Uint32Array  [count0, count1, ...]
+// output.filteredPointCounts  — Uint32Array  [filtered0, filtered1, ...]
+// output.ids                  — Float64Array [id0, id1, ...]
+// output.isCluster            — Uint8Array   [1, 0, 1, ...] (1 = cluster, 0 = point)
+// output.length               — number
 ```
 
 ## API
 
 ### `new ArrowClusterEngine(options?)`
 
-| Option      | Type     | Default | Description                              |
-| ----------- | -------- | ------- | ---------------------------------------- |
-| `radius`    | `number` | `40`    | Cluster radius in pixels                 |
-| `extent`    | `number` | `512`   | Tile extent (radius is relative to this) |
-| `minZoom`   | `number` | `0`     | Minimum zoom level for clustering        |
-| `maxZoom`   | `number` | `16`    | Maximum zoom level for clustering        |
-| `minPoints` | `number` | `2`     | Minimum points to form a cluster         |
+| Option               | Type     | Default | Description                                      |
+| -------------------- | -------- | ------- | ------------------------------------------------ |
+| `radius`             | `number` | `40`    | Cluster radius in pixels                         |
+| `extent`             | `number` | `512`   | Tile extent (radius is relative to this)         |
+| `minZoom`            | `number` | `0`     | Minimum zoom level for clustering                |
+| `maxZoom`            | `number` | `16`    | Maximum zoom level for clustering                |
+| `minPoints`          | `number` | `2`     | Minimum points to form a cluster                 |
+| `histogramBins`      | `number` | `256`   | Histogram bins for range filtering (0 disables)  |
+| `histogramThreshold` | `number` | `256`   | Point count threshold for histogram vs leaf-walk |
+| `excludedValue`      | `number` | —       | In-band sentinel value to treat as excluded/null |
 
-### `engine.load(table, geometryColumn?, idColumn?, filterMask?)`
+### `engine.load(table, geometryColumn?, idColumn?, filterMask?, rangeColumn?)`
 
 Index an Arrow `Table`. The geometry column must be GeoArrow Point encoding (`FixedSizeList[2]` of `Float64`). Single-chunk tables use a zero-copy fast path.
 
 - `geometryColumn` — name of the geometry column (default: `"geometry"`)
 - `idColumn` — reserved for future use. Currently ignored; point IDs are always Arrow row indices. (default: `"id"`)
 - `filterMask` — optional `Uint8Array` of length `table.numRows`. When provided, only rows where `filterMask[i]` is non-zero are indexed. Rows with `0` are excluded from clustering entirely. Pass `null` or omit to include all rows.
+- `rangeColumn` — optional name of a scalar numeric column for range filtering. When provided, per-cluster aggregates (`min`, `max`, `rangedCount`) are precomputed during the build so that `getClusters()` can filter by range at query time without rebuilding.
 
-### `engine.getClusters(bbox, zoom) → ClusterOutput`
+### `engine.getClusters(bbox, zoom, filterRange?) → ClusterOutput`
 
 Query clusters within a bounding box `[minLng, minLat, maxLng, maxLat]` at the given zoom level. Returns typed arrays — no object allocation per result.
+
+- `filterRange` — optional `[min, max]` inclusive numeric range. When provided, clusters whose filtered count is 0 are omitted from the output. The `filteredPointCounts` array reflects how many leaves in each cluster fall within the range.
 
 The returned arrays are views into reusable internal buffers. They're valid until the next `getClusters()` call. Copy them if you need to retain the data.
 
@@ -91,9 +98,11 @@ The returned arrays are views into reusable internal buffers. They're valid unti
 
 Get the immediate children of a cluster.
 
-### `engine.getLeaves(clusterId, limit?, offset?) → number[]`
+### `engine.getLeaves(clusterId, limit?, offset?, filterRange?) → number[]`
 
 Get all leaf point indices for a cluster. Returns indices into the original Arrow table — use `table.get(index)` to materialize rows.
+
+- `filterRange` — optional `[min, max]` inclusive range. When provided, only leaves whose range column value falls within the range are returned.
 
 ### `engine.getClusterExpansionZoom(clusterId) → number`
 
@@ -112,7 +121,8 @@ Decode the origin index from an encoded cluster ID.
 ```ts
 interface ClusterOutput {
   positions: Float64Array; // interleaved [lng, lat, lng, lat, ...]
-  pointCounts: Uint32Array; // points per cluster (1 for individual points)
+  pointCounts: Uint32Array; // total points per cluster (1 for individual points)
+  filteredPointCounts: Uint32Array; // range-filtered count (equals pointCounts when no filterRange)
   ids: Float64Array; // cluster ID or Arrow row index
   isCluster: Uint8Array; // 1 = cluster, 0 = individual point
   length: number; // total items

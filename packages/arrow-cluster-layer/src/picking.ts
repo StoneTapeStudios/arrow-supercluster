@@ -10,12 +10,16 @@ import type { ArrowClusterPickingInfo } from "./types";
  * then materializes the rows from the table.
  *
  * For individual points: the id IS the Arrow row index.
+ *
+ * @param filterRange When active, getLeaves returns only in-range rows and
+ *   pointCount reflects the filtered count.
  */
 export function resolvePickingInfo(
   info: PickingInfo,
   clusterOutput: ClusterOutput | null,
   engine: ArrowClusterEngine | null,
   table: Table | null,
+  filterRange?: [number, number] | null,
 ): ArrowClusterPickingInfo {
   const result = info as ArrowClusterPickingInfo;
 
@@ -31,14 +35,14 @@ export function resolvePickingInfo(
   const idx = info.index;
   const id = clusterOutput.ids[idx];
   const cluster = clusterOutput.isCluster[idx] === 1;
-  const pointCount = clusterOutput.pointCounts[idx];
+  const pointCount = clusterOutput.filteredPointCounts[idx];
 
   result.isCluster = cluster;
   result.clusterId = id;
   result.pointCount = pointCount;
 
   if (cluster) {
-    const leafIndices = engine.getLeaves(id);
+    const leafIndices = engine.getLeaves(id, Infinity, 0, filterRange);
     result.arrowIndices = leafIndices;
     result.rows = leafIndices.map((i) => table.get(i)!);
   } else {
