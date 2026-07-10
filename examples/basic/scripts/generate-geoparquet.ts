@@ -153,10 +153,20 @@ function generateDataset(numPoints: number, name: string) {
 
   const cityVector = vectorFromArray(cityNames, new Utf8());
 
+  // Timestamp column: random Unix seconds spread over one year (2024)
+  const YEAR_START = 1704067200; // 2024-01-01T00:00:00Z
+  const YEAR_SECONDS = 365 * 24 * 60 * 60;
+  const timestamps = new Float64Array(numPoints);
+  for (let i = 0; i < numPoints; i++) {
+    timestamps[i] = YEAR_START + Math.floor(rand() * YEAR_SECONDS);
+  }
+  const timestampVector = makeVector(timestamps);
+
   const table = new Table({
     geometry: geomVector,
     id: idVector,
     city: cityVector,
+    timestamp: timestampVector,
   });
 
   console.log(
