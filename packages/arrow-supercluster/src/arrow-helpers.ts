@@ -1,6 +1,65 @@
 import type { Vector } from "apache-arrow";
 
 /**
+ * Extract a scalar numeric column into a Float64Array.
+ *
+ * Handles: single-chunk zero-copy; multi-chunk concat; integer/float coercion;
+ * null-bitmap → sentinel. Distinct from `getCoordBuffer` (GeoArrow FixedSizeList[2]-specific).
+ *
+ * @param col The Arrow Vector (column) to read.
+ * @param numRows Total number of rows expected.
+ * @param sentinel Value to write for null entries or excluded values.
+ * @param excludedValue Optional in-band value that should also map to sentinel.
+ */
+export function getScalarNumberBuffer(
+  col: Vector,
+  numRows: number,
+  sentinel: number,
+  excludedValue?: number,
+): Float64Array {
+  const chunks = col.data;
+
+  if (numRows === 0) return new Float64Array(0);
+
+  const result = new Float64Array(numRows);
+  let destOffset = 0;
+
+  for (const chunk of chunks) {
+    const values = chunk.values;
+    const nullBitmap = chunk.nullBitmap;
+    const offset = chunk.offset ?? 0;
+    const len = chunk.length;
+
+    for (let j = 0; j < len; j++) {
+      const srcIdx = offset + j;
+
+      // Check null bitmap
+      let isNull = false;
+      if (nullBitmap) {
+        const byteIdx = srcIdx >> 3;
+        const bitIdx = srcIdx & 7;
+        isNull = (nullBitmap[byteIdx] & (1 << bitIdx)) === 0;
+      }
+
+      if (isNull) {
+        result[destOffset + j] = sentinel;
+      } else {
+        const val = Number(values[srcIdx]);
+        if (excludedValue !== undefined && val === excludedValue) {
+          result[destOffset + j] = sentinel;
+        } else {
+          result[destOffset + j] = val;
+        }
+      }
+    }
+
+    destOffset += len;
+  }
+
+  return result;
+}
+
+/**
  * Extract coordinate buffer from a GeoArrow Point column.
  *
  * GeoArrow Point encoding: FixedSizeList[2] of Float64

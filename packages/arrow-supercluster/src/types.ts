@@ -6,6 +6,8 @@ export interface ClusterOutput {
   positions: Float64Array;
   /** Point count per cluster (1 for individual points) */
   pointCounts: Uint32Array;
+  /** Range-filtered point count per cluster. Equals pointCounts when no filterRange is active. */
+  filteredPointCounts: Uint32Array;
   /** Cluster IDs (encoded) for clusters, or Arrow row index for individual points */
   ids: Float64Array;
   /** 1 if the entry is a cluster, 0 if it's an individual point */
@@ -28,4 +30,17 @@ export interface ArrowClusterEngineOptions {
   maxZoom?: number;
   /** Minimum number of points to form a cluster. Default: 2 */
   minPoints?: number;
+
+  /** Number of histogram bins for range filtering. Default: 256. 0 disables
+   *  histograms (min/max + leaf-walk only). */
+  histogramBins?: number;
+
+  /** Clusters with >= this many points get a prefix-sum histogram; smaller clusters
+   *  are leaf-walked at query time. Default: 256. */
+  histogramThreshold?: number;
+
+  /** Value in the range column that marks an excluded row (excluded from every real
+   *  range). Default: Arrow nulls are excluded. Provide this when the caller encodes
+   *  "no value" as an in-band constant rather than null. */
+  excludedValue?: number;
 }
