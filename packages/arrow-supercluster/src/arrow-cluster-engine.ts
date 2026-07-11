@@ -11,6 +11,10 @@ const OFFSET_PARENT = 4;
 const OFFSET_NUM = 5;
 const STRIDE = 6;
 
+/** Minimum bin span for histogram path. Below this, boundary error dominates
+ *  and we fall back to exact leaf-walk counting. */
+const MIN_HISTOGRAM_SPAN_BINS = 4;
+
 /**
  * Arrow-native spatial clustering engine.
  *
@@ -468,7 +472,11 @@ export class ArrowClusterEngine {
     // Partial overlap — try histogram first, fall back to leaf-walk
     const off = this.histOffset[z]?.[nodePos] ?? -1;
     if (off >= 0) {
-      return this._histogramCount(off, filterRange);
+      const loBin = this._binOf(filterRange[0]);
+      const hiBin = this._binOf(filterRange[1]);
+      if (hiBin - loBin >= MIN_HISTOGRAM_SPAN_BINS) {
+        return this._histogramCount(off, filterRange);
+      }
     }
 
     return this._countLeavesInRange(data[k + OFFSET_ID], filterRange);
