@@ -1,5 +1,11 @@
 # arrow-supercluster
 
+## 0.4.1
+
+### Patch Changes
+
+- 0e36427: fix: use exact counting for narrow filterRange queries below histogram resolution
+
 ## 0.4.0
 
 ### Minor Changes
