@@ -362,4 +362,153 @@ describe("Range Filtering", () => {
       'Range column "missing" not found',
     );
   });
+
+  it("sub-bin-width narrow range returns exact count (regression)", () => {
+    // Simulate the scu-atlas date encoding: large domain, narrow query window.
+    // Domain spans 0–100000 (like year*100+day over ~27 years).
+    // With 256 bins: binWidth ≈ 390 units/bin.
+    // A range of width 10 is ~2.5% of one bin — entirely inside a single bin.
+    const coords = generateTestPoints(2000);
+    // Spread values across a large domain
+    const values = coords.map((_, i) => Math.floor((i / 2000) * 100000));
+    const table = buildTableWithRange(coords, values);
+
+    const engine = new ArrowClusterEngine({
+      radius: 150, // large radius to produce big clusters
+      maxZoom: 16,
+      minZoom: 0,
+      minPoints: 2,
+      histogramBins: 256,
+      histogramThreshold: 50, // ensure histograms are built for large clusters
+    });
+    engine.load(table, "geometry", "id", null, "value");
+
+    const bbox: [number, number, number, number] = [-180, -85, 180, 85];
+    // Narrow range: width 10 out of domain 100000 → well within a single bin
+    const filterRange: [number, number] = [50000, 50010];
+
+    const filtered = engine.getClusters(bbox, 0, filterRange);
+
+    // Must match brute-force EXACTLY — no tolerance allowed for narrow ranges
+    for (let i = 0; i < filtered.length; i++) {
+      const bf = bruteForceFilteredCount(
+        engine,
+        filtered,
+        i,
+        values,
+        filterRange,
+      );
+      expect(filtered.filteredPointCounts[i]).toBe(bf);
+    }
+  });
+
+  it("range spanning one bin boundary returns exact count", () => {
+    const coords = generateTestPoints(2000);
+    // Domain 0–999 with 64 bins → binWidth ≈ 15.6
+    const values = coords.map((_, i) => i % 1000);
+    const table = buildTableWithRange(coords, values);
+
+    const engine = new ArrowClusterEngine({
+      radius: 150,
+      maxZoom: 16,
+      minZoom: 0,
+      minPoints: 2,
+      histogramBins: 64,
+      histogramThreshold: 50,
+    });
+    engine.load(table, "geometry", "id", null, "value");
+
+    const bbox: [number, number, number, number] = [-180, -85, 180, 85];
+    // Range spanning ~2 bins (hiBin - loBin = 1..3, below threshold of 4)
+    // binWidth ≈ 15.6, so [100, 120] → loBin=6, hiBin=7 → span=1
+    const filterRange: [number, number] = [100, 120];
+
+    const filtered = engine.getClusters(bbox, 0, filterRange);
+
+    for (let i = 0; i < filtered.length; i++) {
+      const bf = bruteForceFilteredCount(
+        engine,
+        filtered,
+        i,
+        values,
+        filterRange,
+      );
+      expect(filtered.filteredPointCounts[i]).toBe(bf);
+    }
+  });
+
+  it("wide range still uses histogram path (performance sanity)", () => {
+    const coords = generateTestPoints(2000);
+    const values = coords.map((_, i) => i * 0.5); // domain 0..999.5
+    const table = buildTableWithRange(coords, values);
+
+    const engine = new ArrowClusterEngine({
+      radius: 150,
+      maxZoom: 16,
+      minZoom: 0,
+      minPoints: 2,
+      histogramBins: 64,
+      histogramThreshold: 50,
+    });
+    engine.load(table, "geometry", "id", null, "value");
+
+    const bbox: [number, number, number, number] = [-180, -85, 180, 85];
+    // Wide range spanning many bins: [100, 800] → loBin≈6, hiBin≈51 → span≈45
+    const filterRange: [number, number] = [100, 800];
+
+    const filtered = engine.getClusters(bbox, 0, filterRange);
+
+    // Should still produce results and match brute-force within tolerance
+    // (histogram boundary error is acceptable for wide ranges)
+    const tolerance = Math.ceil(2000 / 64) + 1;
+    for (let i = 0; i < filtered.length; i++) {
+      const bf = bruteForceFilteredCount(
+        engine,
+        filtered,
+        i,
+        values,
+        filterRange,
+      );
+      expect(filtered.filteredPointCounts[i]).toBeGreaterThanOrEqual(
+        bf - tolerance,
+      );
+      expect(filtered.filteredPointCounts[i]).toBeLessThanOrEqual(
+        bf + tolerance,
+      );
+    }
+  });
+
+  it("getLeaves count matches filteredPointCounts for narrow range", () => {
+    const coords = generateTestPoints(1000);
+    const values = coords.map((_, i) => i);
+    const table = buildTableWithRange(coords, values);
+
+    const engine = new ArrowClusterEngine({
+      radius: 100,
+      maxZoom: 16,
+      minZoom: 0,
+      minPoints: 2,
+      histogramBins: 256,
+      histogramThreshold: 50,
+    });
+    engine.load(table, "geometry", "id", null, "value");
+
+    const bbox: [number, number, number, number] = [-180, -85, 180, 85];
+    // Narrow range: within a single bin (binWidth ≈ 999/256 ≈ 3.9)
+    const filterRange: [number, number] = [500, 503];
+
+    const filtered = engine.getClusters(bbox, 2, filterRange);
+
+    for (let i = 0; i < filtered.length; i++) {
+      if (filtered.isCluster[i] === 1) {
+        const leaves = engine.getLeaves(
+          filtered.ids[i],
+          Infinity,
+          0,
+          filterRange,
+        );
+        expect(leaves.length).toBe(filtered.filteredPointCounts[i]);
+      }
+    }
+  });
 });
